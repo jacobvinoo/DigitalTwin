@@ -1,0 +1,440 @@
+from django.db import models
+from django.conf import settings
+
+class Topic(models.Model):
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("active", "Active"),
+        ("paused", "Paused"),
+        ("completed", "Completed"),
+        ("deleted", "Deleted"),
+    ]
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    strategic_context = models.TextField(blank=True)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default="draft")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class Objective(models.Model):
+    PRIORITY_CHOICES = [
+        ("low", "Low"),
+        ("medium", "Medium"),
+        ("high", "High"),
+        ("critical", "Critical"),
+    ]
+    
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name="objectives")
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    success_metric = models.CharField(max_length=255, blank=True)
+    priority = models.CharField(max_length=32, choices=PRIORITY_CHOICES, default="medium")
+    status = models.CharField(max_length=32, default="draft")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class Workstream(models.Model):
+    TYPE_CHOICES = [
+        ("competitive_analysis", "Competitive Analysis"),
+        ("market_metrics", "Market Metrics"),
+        ("implementation_plan", "Implementation Plan"),
+        ("risk_analysis", "Risk Analysis"),
+        ("product_strategy", "Product Strategy"),
+        ("roadmap", "Roadmap"),
+        ("execution_tracking", "Execution Tracking"),
+    ]
+    
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name="workstreams")
+    title = models.CharField(max_length=255)
+    type = models.CharField(max_length=64, choices=TYPE_CHOICES)
+    status = models.CharField(max_length=32, default="active")
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class TaskLedgerEntry(models.Model):
+    STATUS_CHOICES = [
+        ("proposed", "Proposed"),
+        ("approved", "Approved"),
+        ("in_progress", "In Progress"),
+        ("completed", "Completed"),
+        ("rejected", "Rejected"),
+        ("blocked", "Blocked"),
+        ("archived", "Archived"),
+    ]
+
+    RISK_CHOICES = [
+        ("low", "Low"),
+        ("medium", "Medium"),
+        ("high", "High"),
+    ]
+
+    topic = models.ForeignKey(Topic, on_delete=models.PROTECT, related_name="tasks")
+    objective = models.ForeignKey(Objective, null=True, blank=True, on_delete=models.SET_NULL)
+    workstream = models.ForeignKey(Workstream, null=True, blank=True, on_delete=models.SET_NULL)
+
+    title = models.CharField(max_length=255)
+    task_type = models.CharField(max_length=100)
+    owner_agent_label = models.CharField(max_length=100, default="assistant")
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default="proposed")
+    risk_level = models.CharField(max_length=32, choices=RISK_CHOICES, default="low")
+
+    approval_required = models.BooleanField(default=False)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approved_tasks",
+    )
+
+    execution_lineage = models.JSONField(default=dict, blank=True)
+    governance = models.JSONField(default=dict, blank=True)
+    inputs = models.JSONField(default=dict, blank=True)
+    telemetry = models.JSONField(default=dict, blank=True)
+    outputs = models.JSONField(default=dict, blank=True)
+    evaluation = models.JSONField(default=dict, blank=True)
+    next_actions = models.JSONField(default=list, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        
+        if self.status == "rejected":
+            if not self.governance or "rejection_reason" not in self.governance:
+                raise ValidationError("rejection_reason is required")
+                
+        if self.status == "in_progress" and self.risk_level in ["medium", "high"]:
+            if not self.approved_at:
+                raise ValidationError("Cannot move to in_progress without approval")
+                
+        super().clean()
+
+class MemoryRecord(models.Model):
+    MEMORY_TYPE_CHOICES = [
+        ("user_preference", "User Preference"),
+        ("project_context", "Project Context"),
+        ("feedback", "Feedback"),
+        ("style_rule", "Style Rule"),
+        ("source_insight", "Source Insight"),
+    ]
+    topic = models.ForeignKey(Topic, null=True, blank=True, on_delete=models.CASCADE)
+    memory_type = models.CharField(max_length=64, choices=MEMORY_TYPE_CHOICES)
+    content = models.TextField()
+    source = models.CharField(max_length=255, blank=True)
+    confidence = models.FloatField(default=1.0)
+    approved_for_reuse = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class FeedbackRecord(models.Model):
+    FEEDBACK_TYPE_CHOICES = [
+        ("quality", "Quality"),
+        ("relevance", "Relevance"),
+        ("style", "Style"),
+        ("accuracy", "Accuracy"),
+        ("usefulness", "Usefulness"),
+    ]
+    SENTIMENT_CHOICES = [
+        ("positive", "Positive"),
+        ("neutral", "Neutral"),
+        ("negative", "Negative"),
+    ]
+    topic = models.ForeignKey(Topic, null=True, blank=True, on_delete=models.CASCADE)
+    task = models.ForeignKey(TaskLedgerEntry, null=True, blank=True, on_delete=models.CASCADE)
+    raw_feedback = models.TextField()
+    feedback_type = models.CharField(max_length=32, choices=FEEDBACK_TYPE_CHOICES)
+    sentiment = models.CharField(max_length=32, choices=SENTIMENT_CHOICES)
+    improvement_suggestion = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+        if is_new and self.topic:
+            MemoryRecord.objects.create(
+                topic=self.topic,
+                memory_type="feedback",
+                content=self.raw_feedback,
+                source=f"feedback_{self.id}",
+                approved_for_reuse=False
+            )
+
+class EvaluationScorecard(models.Model):
+    task = models.ForeignKey(TaskLedgerEntry, on_delete=models.CASCADE, related_name="scorecards")
+    relevance = models.FloatField(null=True, blank=True)
+    quality = models.FloatField(null=True, blank=True)
+    evidence_strength = models.FloatField(null=True, blank=True)
+    actionability = models.FloatField(null=True, blank=True)
+    executive_readiness = models.FloatField(null=True, blank=True)
+    style_alignment = models.FloatField(null=True, blank=True)
+    local_context = models.FloatField(null=True, blank=True)
+    novelty = models.FloatField(null=True, blank=True)
+    overall_score = models.FloatField(null=True, blank=True)
+    reviewer_notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        scores = [
+            self.relevance, self.quality, self.evidence_strength, 
+            self.actionability, self.executive_readiness, self.style_alignment, 
+            self.local_context, self.novelty
+        ]
+        valid_scores = [s for s in scores if s is not None]
+        if valid_scores:
+            self.overall_score = sum(valid_scores) / len(valid_scores)
+        super().save(*args, **kwargs)
+
+class WorkflowRun(models.Model):
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("awaiting_plan_approval", "Awaiting Plan Approval"),
+        ("approved", "Approved"),
+        ("running", "Running"),
+        ("paused", "Paused"),
+        ("completed", "Completed"),
+        ("failed", "Failed"),
+        ("cancelled", "Cancelled"),
+    ]
+
+    RUN_TYPE_CHOICES = [
+        ("daily_plan", "Daily Plan"),
+        ("task_execution", "Task Execution"),
+        ("review_cycle", "Review Cycle"),
+    ]
+
+    topic = models.ForeignKey(Topic, on_delete=models.PROTECT, related_name="workflow_runs")
+    run_type = models.CharField(max_length=64, choices=RUN_TYPE_CHOICES)
+    status = models.CharField(max_length=64, choices=STATUS_CHOICES, default="draft")
+    current_node = models.CharField(max_length=128, blank=True)
+    state = models.JSONField(default=dict, blank=True)
+
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approved_workflow_runs",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.status == "approved":
+            if not self.approved_by or not self.approved_at:
+                raise ValidationError("Must be approved via service (missing approved_by/approved_at)")
+        super().clean()
+
+class WorkflowStep(models.Model):
+    STEP_TYPE_CHOICES = [
+        ("planner", "Planner"),
+        ("approval_gate", "Approval Gate"),
+        ("worker", "Worker"),
+        ("reviewer", "Reviewer"),
+        ("evaluator", "Evaluator"),
+        ("memory_update", "Memory Update"),
+    ]
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("running", "Running"),
+        ("paused", "Paused"),
+        ("completed", "Completed"),
+        ("failed", "Failed"),
+        ("skipped", "Skipped"),
+    ]
+
+    workflow_run = models.ForeignKey(WorkflowRun, on_delete=models.CASCADE, related_name="steps")
+    node_name = models.CharField(max_length=128)
+    step_type = models.CharField(max_length=64, choices=STEP_TYPE_CHOICES)
+    status = models.CharField(max_length=64, choices=STATUS_CHOICES, default="pending")
+    
+    input_state = models.JSONField(default=dict, blank=True)
+    output_state = models.JSONField(default=dict, blank=True)
+    telemetry = models.JSONField(default=dict, blank=True)
+    
+    error_message = models.TextField(blank=True)
+    
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    sort_order = models.IntegerField(default=0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class DailyPlan(models.Model):
+    STATUS_CHOICES = [
+        ("proposed", "Proposed"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+        ("completed", "Completed"),
+    ]
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name="daily_plans")
+    workflow_run = models.ForeignKey(WorkflowRun, on_delete=models.CASCADE, related_name="daily_plans")
+    plan_date = models.DateField()
+    status = models.CharField(max_length=64, choices=STATUS_CHOICES, default="proposed")
+    summary = models.TextField(blank=True)
+    plan_items = models.JSONField(default=list, blank=True)
+    risk_summary = models.JSONField(default=dict, blank=True)
+    diff_from_previous = models.JSONField(default=dict, blank=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approved_daily_plans",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.status == "approved":
+            if not self.approved_by or not self.approved_at:
+                raise ValidationError("DailyPlan cannot become approved without approved_by and approved_at")
+        super().clean()
+
+class ActionRequest(models.Model):
+    ACTION_TYPES = [
+        ("email_draft", "Email Draft"),
+        ("email_send", "Email Send"),
+        ("document_create", "Document Create"),
+        ("stakeholder_update", "Stakeholder Update"),
+        ("research_request", "Research Request"),
+        ("follow_up_task", "Follow-up Task"),
+    ]
+
+    STATUS_CHOICES = [
+        ("proposed", "Proposed"),
+        ("drafted", "Drafted"),
+        ("awaiting_approval", "Awaiting Approval"),
+        ("approved", "Approved"),
+        ("executed", "Executed"),
+        ("rejected", "Rejected"),
+        ("failed", "Failed"),
+    ]
+
+    topic = models.ForeignKey(Topic, on_delete=models.PROTECT, related_name="actions")
+    task = models.ForeignKey(TaskLedgerEntry, null=True, blank=True, on_delete=models.SET_NULL)
+
+    action_type = models.CharField(max_length=64, choices=ACTION_TYPES)
+    title = models.CharField(max_length=255)
+    instruction = models.TextField()
+
+    status = models.CharField(max_length=64, choices=STATUS_CHOICES, default="proposed")
+    risk_level = models.CharField(max_length=32, default="medium")
+    approval_required = models.BooleanField(default=True)
+
+    payload = models.JSONField(default=dict, blank=True)
+    generated_output = models.JSONField(default=dict, blank=True)
+    execution_result = models.JSONField(default=dict, blank=True)
+    telemetry = models.JSONField(default=dict, blank=True)
+
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approved_actions",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejected_reason = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        
+        if self.action_type == "email_send" and not self.approval_required:
+            raise ValidationError("For email_send, approval_required must be True")
+            
+        if self.status == "rejected" and not self.rejected_reason:
+            raise ValidationError("rejected_reason is required when status is rejected")
+            
+        if self.status == "executed" and not self.execution_result:
+            raise ValidationError("execution_result is required when status is executed")
+            
+        super().clean()
+
+class ConversationSession(models.Model):
+    ENTITY_CHOICES = [
+        ("assistant", "Assistant"),
+        ("executive", "Executive"),
+    ]
+
+    STATUS_CHOICES = [
+        ("active", "Active"),
+        ("archived", "Archived"),
+    ]
+
+    topic = models.ForeignKey(
+        Topic,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="conversation_sessions",
+    )
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    active_entity = models.CharField(
+        max_length=32,
+        choices=ENTITY_CHOICES,
+        default="assistant",
+    )
+    title = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default="active")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class ConversationMessage(models.Model):
+    SENDER_CHOICES = [
+        ("user", "User"),
+        ("assistant", "Assistant"),
+        ("executive", "Executive"),
+        ("system", "System"),
+    ]
+
+    CHANNEL_CHOICES = [
+        ("text", "Text"),
+        ("voice", "Voice"),
+    ]
+
+    session = models.ForeignKey(
+        ConversationSession,
+        on_delete=models.CASCADE,
+        related_name="messages",
+    )
+    sender = models.CharField(max_length=32, choices=SENDER_CHOICES)
+    channel = models.CharField(max_length=32, choices=CHANNEL_CHOICES, default="text")
+    message_text = models.TextField()
+    intent = models.CharField(max_length=100, blank=True)
+
+    linked_topic = models.ForeignKey(Topic, null=True, blank=True, on_delete=models.SET_NULL)
+    linked_task = models.ForeignKey(TaskLedgerEntry, null=True, blank=True, on_delete=models.SET_NULL)
+    linked_action = models.ForeignKey(ActionRequest, null=True, blank=True, on_delete=models.SET_NULL)
+
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class VoiceTranscriptRecord(models.Model):
+    session = models.ForeignKey(ConversationSession, on_delete=models.CASCADE, related_name="transcripts")
+    raw_audio_ref = models.CharField(max_length=255, blank=True)
+    transcript_text = models.TextField()
+    confidence = models.FloatField(null=True, blank=True)
+    language = models.CharField(max_length=32, default="en-US")
+    provider = models.CharField(max_length=64, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
