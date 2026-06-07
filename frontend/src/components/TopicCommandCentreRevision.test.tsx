@@ -26,7 +26,7 @@ describe('TopicCommandCentre Revision State', () => {
     const user = userEvent.setup();
     render(<TopicCommandCentre topicId="1" />);
     
-    const taskRow = screen.getByText(/Draft email/i);
+    const taskRow = await screen.findByText(/Draft email/i);
     await user.click(taskRow);
     
     expect(screen.getByText(/Revision required/i)).toBeInTheDocument();

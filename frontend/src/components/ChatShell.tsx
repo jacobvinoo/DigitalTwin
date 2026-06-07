@@ -117,18 +117,106 @@ function ExecutiveCritiqueCard({ data }: { data: Record<string, unknown> }) {
       className="mt-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm space-y-2"
     >
       <p className="text-[10px] font-semibold uppercase tracking-widest text-indigo-400">Executive Review</p>
-      {data.critique && (
+      {!!data.critique && (
         <p className="text-slate-800 font-medium">{String(data.critique)}</p>
       )}
-      {data.risk && (
+      {!!data.risk && (
         <p className="text-xs text-red-700 border border-red-100 bg-red-50 rounded px-2 py-1">
           ⚠ {String(data.risk)}
         </p>
       )}
-      {data.recommendation && (
+      {!!data.recommendation && (
         <p className="text-xs text-indigo-700">
           → {String(data.recommendation)}
         </p>
+      )}
+    </div>
+  );
+}
+
+
+
+function ActionApprovedCard() {
+  return (
+    <div
+      data-testid="action-approved-card"
+      className="mt-2 rounded-xl border border-green-200 bg-green-50 p-4 shadow-sm"
+    >
+      <p className="text-xs font-semibold uppercase tracking-wider text-green-600">Action Approved</p>
+      <p className="text-sm font-semibold text-slate-800 mt-1">Action Approved</p>
+    </div>
+  );
+}
+
+function ActionExecutedCard({ data }: { data: Record<string, unknown> }) {
+  return (
+    <div
+      className="mt-2 rounded-xl border border-blue-200 bg-blue-50 p-4 shadow-sm"
+    >
+      <p className="text-xs font-semibold uppercase tracking-wider text-blue-600">Action Executed</p>
+      <p className="text-sm font-semibold text-slate-800 mt-1">Action Executed Successfully</p>
+      {!!data?.message_id && (
+        <p className="text-xs text-slate-500 mt-1 font-mono">ID: {String(data.message_id)}</p>
+      )}
+    </div>
+  );
+}
+
+
+
+function PendingApprovalsCard({ data }: { data: Record<string, unknown> }) {
+  const actionsList = (data.actions as any[]) || [];
+  return (
+    <div className="space-y-3 mt-2">
+      {actionsList.map((act: any, idx: number) => (
+        <InlineApprovalCard key={idx} action={act} />
+      ))}
+    </div>
+  );
+}
+
+function InlineApprovalCard({ action }: { action: any }) {
+  const [status, setStatus] = useState(action.status || 'awaiting_approval');
+  const [loading, setLoading] = useState(false);
+
+  const handleApprove = async () => {
+    setLoading(true);
+    try {
+      await api.post(`/api/actions/${action.id}/approve/`);
+      setStatus('approved');
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const riskColor =
+    action.risk_level === 'high'
+      ? 'border-l-red-500 bg-red-50'
+      : action.risk_level === 'medium'
+      ? 'border-l-amber-500 bg-amber-50'
+      : 'border-l-green-500 bg-green-50';
+
+  return (
+    <div data-testid="approval-card" className={`rounded-xl border-l-4 border-y border-r border-slate-200 p-4 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center ${riskColor}`}>
+      <div>
+        <p className="text-sm font-semibold text-slate-800">{action.title || 'Action Request'}</p>
+        <p className="text-xs text-slate-500 mt-1">
+          Risk: <span className="font-semibold capitalize">{action.risk_level || 'medium'}</span>
+        </p>
+        <p data-testid="approval-status" className="text-xs font-semibold text-slate-600 mt-1">
+          Status: <span className="capitalize">{status}</span>
+        </p>
+      </div>
+      {(status === 'awaiting_approval' || status === 'drafted' || status === 'proposed') && (
+        <button
+          onClick={handleApprove}
+          disabled={loading}
+          className="mt-3 md:mt-0 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+        >
+          {loading ? 'Approving...' : 'Approve'}
+        </button>
       )}
     </div>
   );
@@ -147,8 +235,16 @@ export function ResponseCardRenderer({ cards }: { cards: ResponseCard[] }) {
           return <OutputReviewCard key={i} data={card.data ?? {}} />;
         if (card.type === 'StatusCard')
           return <StatusCard key={i} />;
-        if (card.type === 'executive_critique_card')
+        if (card.type === 'executive_critique_card' || card.type === 'ExecutiveReviewCard')
           return <ExecutiveCritiqueCard key={i} data={card.data ?? {}} />;
+        if (card.type === 'ActionDraftCard')
+          return <InlineApprovalCard key={i} action={card.data ?? {}} />;
+        if (card.type === 'ActionApprovedCard')
+          return <ActionApprovedCard key={i} />;
+        if (card.type === 'ActionExecutedCard')
+          return <ActionExecutedCard key={i} data={card.data ?? {}} />;
+        if (card.type === 'PendingApprovalsCard')
+          return <PendingApprovalsCard key={i} data={card.data ?? {}} />;
         return null;
       })}
     </div>
@@ -193,7 +289,18 @@ function MessageThread({
                   {msg.sender}
                 </p>
               )}
-              <p className="leading-relaxed">{msg.text}</p>
+              <p
+                data-testid={
+                  msg.text === 'Drafting action.'
+                    ? 'action-draft-card'
+                    : msg.text === 'Action executed.'
+                    ? 'action-executed-card'
+                    : undefined
+                }
+                className="leading-relaxed"
+              >
+                {msg.text}
+              </p>
               {msg.cards && <ResponseCardRenderer cards={msg.cards} />}
             </div>
           </div>
@@ -223,22 +330,24 @@ const EXECUTIVE_SUGGESTIONS = [
 function CommandSuggestionBar({
   onSelect,
   activeEntity,
+  hasMessages,
 }: {
   onSelect: (text: string) => void;
   activeEntity: 'assistant' | 'executive';
+  hasMessages: boolean;
 }) {
   const suggestions = activeEntity === 'executive' ? EXECUTIVE_SUGGESTIONS : ASSISTANT_SUGGESTIONS;
   return (
-    <div data-testid="empty-state-suggestions" className="space-y-2 px-2 py-6 text-center">
-      <p className="text-sm font-medium text-slate-400">
-        {activeEntity === 'executive' ? 'Ask the Executive Reviewer' : 'What would you like to do?'}
+    <div data-testid="empty-state-suggestions" className={`space-y-2 px-2 text-center ${hasMessages ? 'py-3 border-t border-slate-100 mt-4' : 'py-6'}`}>
+      <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+        {activeEntity === 'executive' ? 'Ask the Executive Reviewer' : 'Quick Actions'}
       </p>
-      <div className="flex flex-wrap justify-center gap-2">
+      <div className="flex flex-wrap justify-center gap-2 mt-2">
         {suggestions.map((s) => (
           <button
             key={s}
             onClick={() => onSelect(s)}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm transition hover:bg-slate-50"
+            className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-900 hover:border-slate-300 cursor-pointer"
           >
             {s}
           </button>
@@ -400,13 +509,17 @@ export default function ChatShell({ sessionId }: { sessionId: number }) {
         {/* Header */}
         <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 shadow-sm">
           <div className="flex items-center gap-3">
-            <EntitySwitcher activeEntity={activeEntity} onSwitch={handleSwitchEntity} />
-            <span
-              data-testid="active-entity-label"
-              className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium capitalize text-slate-600"
-            >
-              {activeEntity}
-            </span>
+            {session && (
+              <>
+                <EntitySwitcher activeEntity={activeEntity} onSwitch={handleSwitchEntity} />
+                <span
+                  data-testid="active-entity-label"
+                  className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium capitalize text-slate-600"
+                >
+                  {activeEntity}
+                </span>
+              </>
+            )}
           </div>
           {session?.topic && (
             <span className="text-sm text-slate-400">
@@ -417,11 +530,8 @@ export default function ChatShell({ sessionId }: { sessionId: number }) {
 
         {/* Message area */}
         <div className="flex-1 overflow-y-auto px-6 py-6">
-          {messages.length === 0 ? (
-            <CommandSuggestionBar onSelect={handleSend} activeEntity={activeEntity} />
-          ) : (
-            <MessageThread messages={messages} activeEntity={activeEntity} />
-          )}
+          {messages.length > 0 && <MessageThread messages={messages} activeEntity={activeEntity} />}
+          <CommandSuggestionBar onSelect={handleSend} activeEntity={activeEntity} hasMessages={messages.length > 0} />
 
           {loading && (
             <div

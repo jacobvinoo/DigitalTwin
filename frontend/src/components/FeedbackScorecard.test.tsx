@@ -1,18 +1,77 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import TopicCommandCentre from './TopicCommandCentre';
 
 describe('Feedback and Scorecard', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
   it('allows user to submit feedback and scorecards', async () => {
     const user = userEvent.setup();
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    let averageQualityScore: string | number = "Not scored";
+    const mockFetch = vi.fn().mockImplementation((url, options) => {
+      if (url.includes('/command-centre/')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            active_tasks_count: 8,
+            completed_tasks_count: 0,
+            pending_approval_count: 4,
+            average_quality_score: averageQualityScore
+          })
+        });
+      }
+      if (url.includes('/api/topics/')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            id: 1,
+            title: "Search for Supermarket",
+            objective: "Improve supermarket search relevance",
+            status: "Active"
+          })
+        });
+      }
+      if (url.includes('/api/tasks/1/score/')) {
+        if (options && options.body) {
+          const body = JSON.parse(options.body);
+          if (body.quality) {
+            averageQualityScore = body.quality;
+          }
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "scorecard created" }) });
+      }
+      if (url.includes('/api/tasks/1/')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            id: 1, title: "Create Algolia implementation plan", workstream: "Implementation Plan", risk: "medium", status: "proposed", approval: "required", score: "-"
+          })
+        });
+      }
+      if (url.includes('/api/tasks')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([
+            { id: 1, title: "Create Algolia implementation plan", workstream: "Implementation Plan", risk: "medium", status: "proposed", approval: "required", score: "-" },
+            { id: 2, title: "Identify product, technical, adoption, and data risks", workstream: "Risk Analysis", risk: "high", status: "proposed", approval: "required", score: "-" },
+            { id: 3, title: "Create product strategy narrative", workstream: "Product Strategy", risk: "medium", status: "proposed", approval: "required", score: "-" },
+            { id: 4, title: "Create 30/60/90 day roadmap", workstream: "Roadmap", risk: "medium", status: "proposed", approval: "required", score: "-" },
+            { id: 5, title: "Analyse current supermarket search experience", workstream: "Competitive Analysis", risk: "low", status: "in_progress", approval: "not required", score: "-" }
+          ])
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
     globalThis.fetch = mockFetch as any;
 
     render(<TopicCommandCentre topicId="1" />);
 
     // Open a task to see TaskDetailDrawer
-    const taskRow = screen.getAllByText(/Create Algolia implementation plan/i)[1];
+    const taskRow = (await screen.findAllByText(/Create Algolia implementation plan/i))[1];
     await user.click(taskRow);
 
     const drawer = screen.getByRole('dialog', { name: /Task Detail/i });

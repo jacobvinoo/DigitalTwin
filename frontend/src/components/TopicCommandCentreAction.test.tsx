@@ -32,7 +32,7 @@ describe('TopicCommandCentre - Actions Tab', () => {
     render(<TopicCommandCentre topicId="1" />);
 
     // 1. User sees Actions tab in topic
-    const actionsTab = screen.getByRole('button', { name: /Actions/i });
+    const actionsTab = await screen.findByRole('button', { name: /Actions/i });
     expect(actionsTab).toBeInTheDocument();
     await user.click(actionsTab);
 
@@ -74,7 +74,7 @@ describe('TopicCommandCentre - Actions Tab', () => {
 
   it('manages action approval and execution lifecycle safely', async () => {
     // Mock fetch for execute and approve
-    let actionState = {
+    let actionState: any = {
       id: 100,
       title: 'Send Report',
       action_type: 'email_send',
@@ -113,7 +113,7 @@ describe('TopicCommandCentre - Actions Tab', () => {
     const user = userEvent.setup();
     render(<TopicCommandCentre topicId="1" />);
 
-    await user.click(screen.getByRole('button', { name: /Actions/i }));
+    await user.click(await screen.findByRole('button', { name: /Actions/i }));
     
     // Select the action
     await waitFor(() => {
@@ -149,6 +149,161 @@ describe('TopicCommandCentre - Actions Tab', () => {
     // 7. Executed action shows result.
     await waitFor(() => {
       expect(screen.getByText(/msg-abc/)).toBeInTheDocument();
+    });
+  });
+
+  it('handles action execution failure gracefully without crashing', async () => {
+    let actionState = {
+      id: 101,
+      title: 'Failed Action Send',
+      action_type: 'email_send',
+      status: 'approved',
+      risk_level: 'high',
+      approval_required: true,
+      generated_output: {
+        subject: 'Fail Report',
+        recipients: ['team@example.com'],
+        body: 'Here is the report.',
+      },
+      execution_result: null
+    };
+
+    global.fetch = vi.fn().mockImplementation((url, options) => {
+      if (url.includes('/api/actions/') && !options) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([actionState]) });
+      }
+      if (url.includes('/execute/')) {
+        return Promise.resolve({
+          ok: false,
+          status: 400,
+          json: () => Promise.resolve({ error: 'Must approve high-risk action before execution' })
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    });
+
+    const user = userEvent.setup();
+    render(<TopicCommandCentre topicId="1" />);
+
+    await user.click(await screen.findByRole('button', { name: /Actions/i }));
+    
+    await waitFor(() => {
+      expect(screen.getByText('Failed Action Send')).toBeInTheDocument();
+    });
+    await user.click(screen.getByText('Failed Action Send'));
+
+    const executeBtn = screen.getByRole('button', { name: /Execute Action/i });
+    expect(executeBtn).not.toBeDisabled();
+
+    // Trigger execute which will fail (status 400)
+    await user.click(executeBtn);
+
+    // Verify error toast message is displayed and UI is intact
+    await waitFor(() => {
+      expect(screen.getByText('Must approve high-risk action before execution')).toBeInTheDocument();
+      expect(screen.getAllByText('Failed Action Send').length).toBeGreaterThan(0);
+    });
+  });
+
+  it('allows the user to delete an action request from the details panel', async () => {
+    let actionState = {
+      id: 100,
+      title: 'Send Report To Delete',
+      action_type: 'email_send',
+      status: 'awaiting_approval',
+      risk_level: 'high',
+      approval_required: true,
+      generated_output: {
+        subject: 'Weekly Report',
+        recipients: ['team@example.com'],
+        body: 'Here is the report.',
+      },
+      execution_result: null
+    };
+
+    vi.spyOn(window, 'confirm').mockImplementation(() => true);
+
+    let deleteCalled = false;
+
+    global.fetch = vi.fn().mockImplementation((url, options) => {
+      if (url.includes('/api/actions/') && options?.method === 'DELETE') {
+        deleteCalled = true;
+        return Promise.resolve({ ok: true });
+      }
+      if (url.includes('/api/actions/') && !options) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([actionState]) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    });
+
+    const user = userEvent.setup();
+    render(<TopicCommandCentre topicId="1" />);
+
+    await user.click(await screen.findByRole('button', { name: /Actions/i }));
+    
+    // Select the action
+    await waitFor(() => {
+      expect(screen.getByText('Send Report To Delete')).toBeInTheDocument();
+    });
+    await user.click(screen.getByText('Send Report To Delete'));
+
+    // Locate Delete Action button and click it
+    const deleteBtn = await screen.findByRole('button', { name: /Delete Action Request/i });
+    expect(deleteBtn).toBeInTheDocument();
+    await user.click(deleteBtn);
+
+    // Assert fetch DELETE was called and action is removed from UI
+    await waitFor(() => {
+      expect(deleteCalled).toBe(true);
+      expect(screen.queryByText('Send Report To Delete')).not.toBeInTheDocument();
+    });
+  });
+
+  it('allows the user to delete an action request inline from the inbox', async () => {
+    let actionState = {
+      id: 100,
+      title: 'Send Report To Delete Inline',
+      action_type: 'email_send',
+      status: 'awaiting_approval',
+      risk_level: 'high',
+      approval_required: true,
+      generated_output: {
+        subject: 'Weekly Report',
+        recipients: ['team@example.com'],
+        body: 'Here is the report.',
+      },
+      execution_result: null
+    };
+
+    vi.spyOn(window, 'confirm').mockImplementation(() => true);
+
+    let deleteCalled = false;
+
+    global.fetch = vi.fn().mockImplementation((url, options) => {
+      if (url.includes('/api/actions/') && options?.method === 'DELETE') {
+        deleteCalled = true;
+        return Promise.resolve({ ok: true });
+      }
+      if (url.includes('/api/actions/') && !options) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([actionState]) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    });
+
+    const user = userEvent.setup();
+    render(<TopicCommandCentre topicId="1" />);
+
+    await user.click(await screen.findByRole('button', { name: /Actions/i }));
+    
+    // Locate the inline delete button next to the risk badge
+    const deleteBtn = await screen.findByTestId('delete-action-btn-100');
+    expect(deleteBtn).toBeInTheDocument();
+    await user.click(deleteBtn);
+
+    // Assert fetch DELETE was called and action is removed from UI
+    await waitFor(() => {
+      expect(deleteCalled).toBe(true);
+      expect(screen.queryByText('Send Report To Delete Inline')).not.toBeInTheDocument();
     });
   });
 });

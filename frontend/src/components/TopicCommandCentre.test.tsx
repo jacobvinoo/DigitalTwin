@@ -105,4 +105,119 @@ describe('TopicCommandCentre', () => {
     // 10. UI should not show "agent is working autonomously"
     expect(screen.queryByText(/agent is working autonomously/i)).not.toBeInTheDocument();
   });
+
+  it('renders task category tags and interactive execution actions inside the task drawer', async () => {
+    const user = userEvent.setup();
+    
+    // Override fetch implementation to mock task with actions
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/actions/')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }
+      if (url.includes('/api/topics/1/command-centre')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ active_tasks_count: 1 }) });
+      }
+      if (url.includes('/api/topics/1/')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 1, title: "Search Topic" }) });
+      }
+      if (url.includes('/api/tasks/1/')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            id: 1,
+            title: "Create 30/60/90 day roadmap",
+            workstream: "Roadmap",
+            risk: "medium",
+            status: "completed",
+            approval: "required",
+            score: "-",
+            actions: [
+              {
+                id: 10,
+                title: "30-Day Plan - Setup sandbox",
+                action_type: "follow_up_task",
+                instruction: "Configure credentials",
+                status: "proposed",
+                risk_level: "medium",
+                approval_required: true
+              }
+            ]
+          })
+        });
+      }
+      if (url.includes('/api/tasks/')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([
+            { id: 1, title: "Create 30/60/90 day roadmap", workstream: "Roadmap", risk: "medium", status: "completed", approval: "required", score: "-" }
+          ])
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    render(<TopicCommandCentre topicId="1" />);
+
+    // 1. Task row contains the "Planning" category tag
+    await waitFor(() => {
+      const planningBadge = screen.getByText('Planning');
+      expect(planningBadge).toBeInTheDocument();
+    });
+
+    // 2. Click task to open drawer
+    const taskRow = screen.getByText(/Create 30\/60\/90 day roadmap/i);
+    await user.click(taskRow);
+
+    // 3. Verify drawer opens and shows action with "Execution" tag
+    await waitFor(() => {
+      const drawer = screen.getByRole('dialog', { name: /Task Detail/i });
+      expect(drawer).toHaveTextContent(/Execution Actions/i);
+      expect(drawer).toHaveTextContent(/30-Day Plan - Setup sandbox/i);
+      expect(screen.getByText('Execution')).toBeInTheDocument();
+    });
+
+    // 4. Verify "Approve" button is present for proposed medium risk action
+    const approveBtn = screen.getByRole('button', { name: 'Approve' });
+    expect(approveBtn).toBeInTheDocument();
+  });
+
+  it('renders draft tasks from planning and handles adding them to the board', async () => {
+    const user = userEvent.setup();
+    
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/actions/')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }
+      if (url.includes('/api/topics/1/command-centre')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ active_tasks_count: 1 }) });
+      }
+      if (url.includes('/api/topics/1/')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 1, title: "Search Topic" }) });
+      }
+      if (url.includes('/api/tasks/')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([
+            { id: 1, title: "Draft Focus Task", workstream: "Roadmap", risk: "medium", status: "proposed", approval: "required", score: "-", governance: { is_draft: true } }
+          ])
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    render(<TopicCommandCentre topicId="1" />);
+
+    // 1. Shows "Draft Tasks from Planning" panel
+    await waitFor(() => {
+      expect(screen.getByTestId('draft-tasks-panel')).toBeInTheDocument();
+      expect(screen.getByText('Draft Focus Task')).toBeInTheDocument();
+    });
+
+    // 2. Click "Add to Board" button
+    const addBtn = screen.getByRole('button', { name: /Add to Board/i });
+    await user.click(addBtn);
+
+    // 3. Verify fetch endpoint called
+    expect(global.fetch).toHaveBeenCalledWith('/api/tasks/1/add-to-board/', { method: 'POST' });
+  });
 });

@@ -20,6 +20,7 @@ test('Complete Phase 1 user flow', async ({ page }) => {
 
   // 7. User lands on command centre.
   await expect(page).toHaveURL(/\/topics\/\d+\/command-centre/);
+  const topicId = page.url().match(/\/topics\/(\d+)\//)?.[1] || '1';
 
   // 8. User sees seven workstreams.
   // Assuming a specific heading or card exists
@@ -43,7 +44,7 @@ test('Complete Phase 1 user flow', async ({ page }) => {
   await page.click('button:has-text("Save Scorecard")');
 
   // 14. User opens Memory Review.
-  await page.goto('/topics/1/memory-review'); // Assuming topic ID 1 for test
+  await page.goto(`/topics/${topicId}/memory-review`);
 
   // 15. User sees pending memory candidate.
   await expect(page.getByText('When analysing regional supermarket strategy, include local market context')).toBeVisible();
@@ -52,10 +53,10 @@ test('Complete Phase 1 user flow', async ({ page }) => {
   await page.click('button:has-text("Approve")');
 
   // 17. User returns to command centre.
-  await page.goto('/topics/1/command-centre');
+  await page.goto(`/topics/${topicId}/command-centre`);
 
   // 18. Performance summary reflects score.
-  await expect(page.getByText('5', { exact: true })).toBeVisible();
+  await expect(page.getByText('5', { exact: true }).first()).toBeVisible();
 
   // 19. Pending approval count has decreased.
   // This depends on initial count, but we can just check if it's visible without error

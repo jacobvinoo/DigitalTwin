@@ -1,4 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { api } from './api'
+import ProjectDashboard from './components/ProjectDashboard'
 import TopicCreateWizard from './components/TopicCreateWizard'
 import TopicCommandCentre from './components/TopicCommandCentre'
 import MemoryReview from './components/MemoryReview'
@@ -7,15 +9,25 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Navigate to="/topics/new" />} />
-        <Route path="/topics" element={<Navigate to="/topics/new" />} />
+        <Route path="/" element={<ProjectDashboard />} />
+        <Route path="/topics" element={<ProjectDashboard />} />
         <Route 
           path="/topics/new" 
           element={
             <TopicCreateWizard 
-              onSubmit={(data) => {
+              onSubmit={async (data) => {
                 console.log('Created topic:', data);
-                // The redirection logic will be inside TopicCreateWizard itself
+                try {
+                  const response = await api.post<any>('/api/topics/', {
+                    title: data.title,
+                    objective: data.objective,
+                    strategic_context: data.strategicContext
+                  });
+                  return response.data;
+                } catch (error) {
+                  console.error(error);
+                  throw error;
+                }
               }} 
             />
           } 

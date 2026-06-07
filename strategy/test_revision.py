@@ -60,7 +60,8 @@ class RevisionRequiredTestCase(APITestCase):
         self.task.refresh_from_db()
         self.assertFalse(self.task.governance.get("revision_required"))
 
-    def test_user_can_request_rerun(self):
+    @patch('strategy.workflows.run_agent_for_single_task')
+    def test_user_can_request_rerun(self, mock_run, MockClient=None):
         self.task.status = "blocked"
         self.task.outputs = {"agent_output": {"data": "old"}}
         self.task.save()
@@ -71,7 +72,38 @@ class RevisionRequiredTestCase(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, "in_progress")
+        mock_run.assert_called_once_with(self.task, user=self.user)
         
         # Verify previous output is preserved
         self.assertEqual(len(self.task.outputs.get("output_versions", [])), 1)
         self.assertEqual(self.task.outputs["output_versions"][0]["data"], "old")
+
+    def test_run_agent_for_single_task_integration(self):
+        self.task.status = "blocked"
+        self.task.outputs = {"agent_output": {"data": "old"}}
+        self.task.save()
+        
+        from strategy.workflows import run_agent_for_single_task
+        run_agent_for_single_task(self.task, user=self.user)
+        
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, "completed")
+        self.assertIsNotNone(self.task.outputs.get("agent_output"))
+        self.assertIsNotNone(self.task.outputs.get("executive_review"))
+        self.assertIsNotNone(self.task.evaluation.get("agent_evaluation"))
+
+    def test_run_agent_for_generic_task_fallback(self):
+        generic_task = TaskLedgerEntry.objects.create(
+            topic=self.topic,
+            title="Custom Generic Task",
+            task_type="generic",
+            status="proposed",
+            outputs={"agent_output": {"data": "old"}},
+            governance={}
+        )
+        from strategy.workflows import run_agent_for_single_task
+        run_agent_for_single_task(generic_task, user=self.user)
+        
+        generic_task.refresh_from_db()
+        self.assertEqual(generic_task.status, "completed")
+        self.assertIsNotNone(generic_task.outputs.get("agent_output"))

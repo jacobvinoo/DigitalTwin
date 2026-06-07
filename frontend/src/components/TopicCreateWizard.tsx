@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 interface TopicCreateWizardProps {
-  onSubmit: (data: { title: string; objective: string; strategicContext: string }) => void;
+  onSubmit: (data: { title: string; objective: string; strategicContext: string }) => Promise<any> | void;
 }
 
 export default function TopicCreateWizard({ onSubmit }: TopicCreateWizardProps) {
@@ -14,14 +14,19 @@ export default function TopicCreateWizard({ onSubmit }: TopicCreateWizardProps) 
 
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit({ title, objective, strategicContext });
-    setIsSuccess(true);
-    // Redirect to command centre after a brief delay
-    setTimeout(() => {
-      navigate('/topics/1/command-centre');
-    }, 1000);
+    try {
+      const result = await onSubmit({ title, objective, strategicContext });
+      setIsSuccess(true);
+      const topicId = result?.id || 1;
+      // Redirect to command centre after a brief delay
+      setTimeout(() => {
+        navigate(`/topics/${topicId}/command-centre`);
+      }, 1000);
+    } catch (error) {
+      console.error('Failed to create topic:', error);
+    }
   };
 
   if (isSuccess) {

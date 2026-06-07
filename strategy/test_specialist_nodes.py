@@ -11,7 +11,8 @@ try:
         strategy_manager_node,
         executive_reviewer_node,
         evaluation_node,
-        agent_router_node
+        agent_router_node,
+        housekeeping_node
     )
 except ImportError:
     pass # Will fail in tests naturally
@@ -116,10 +117,102 @@ class SpecialistNodesTestCase(APITestCase):
 
     @patch('strategy.workflows.get_llm_client')
     def test_schema_validation_failure_marks_run_failed(self, MockClient):
-        MockClient().execute.side_effect = AgentOutputValidationError("bad json")
+        MockClient().execute.side_effect = AgentOutputValidationError(
+            "bad json",
+            telemetry={"model": "gpt-4o", "prompt_tokens": 10},
+            audit={"raw_prompt": "hello prompt", "raw_response": "hello response"},
+            errors=[{"loc": ["field"], "msg": "value error"}]
+        )
         
         result_state = product_manager_node(self.state)
         
         self.workflow_run.refresh_from_db()
         self.assertEqual(self.workflow_run.status, "failed")
         self.assertEqual(result_state["status"], "failed")
+        
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, "failed")
+        
+        # Verify telemetry was updated
+        self.assertIn("agent_runs", self.task.telemetry)
+        run_entry = self.task.telemetry["agent_runs"][-1]
+        self.assertEqual(run_entry["node_name"], "product_manager_node")
+        self.assertEqual(run_entry["model"], "gpt-4o")
+        self.assertEqual(run_entry["prompt"], "hello prompt")
+        self.assertEqual(run_entry["response"], "hello response")
+        self.assertEqual(run_entry["error"], "bad json")
+        self.assertEqual(run_entry["validation_errors"], [{"loc": ["field"], "msg": "value error"}])
+
+    @patch('strategy.workflows.get_llm_client')
+    def test_document_generation_on_success(self, MockClient):
+        mock_result = MagicMock()
+        mock_result.data.model_dump.return_value = {
+            "task_title": "Algolia Roadmap Plan",
+            "product_problem": "Supermarket shoppers experience friction during checkout",
+            "target_users": ["Busy professionals"],
+            "user_needs": ["Instant typo-tolerant search responses under 100ms"],
+            "product_recommendation": "Deploy a dedicated search widget",
+            "success_metrics": ["Search conversion rate increase by >10%"],
+            "risks": ["Data synchronization lag"],
+            "assumptions": ["Product catalog contains clean tags"],
+            "next_actions": ["Define schema", "Create test index", "Conduct user testing"],
+            "evidence_refs": ["Baymard Study"],
+            "confidence_score": 0.9
+        }
+        mock_result.telemetry = {"model": "gpt-4o", "prompt_version": "v1.0.0", "total_tokens": 50, "api_cost_usd": 0.001, "execution_time_ms": 100}
+        mock_result.audit = {"raw_prompt": "x", "raw_response": "y"}
+        MockClient().execute.return_value = mock_result
+        
+        product_manager_node(self.state)
+        
+        self.task.refresh_from_db()
+        self.assertIn("generated_document_name", self.task.outputs)
+        self.assertIn("generated_document_path", self.task.outputs)
+        self.assertIn("generated_document_markdown", self.task.outputs)
+        
+        doc_name = self.task.outputs["generated_document_name"]
+        self.assertTrue(doc_name.startswith(f"task_{self.task.id}_"))
+        self.assertTrue(doc_name.endswith(".md"))
+        
+        import os
+        self.assertTrue(os.path.exists(self.task.outputs["generated_document_path"]))
+        
+        try:
+            os.remove(self.task.outputs["generated_document_path"])
+        except Exception:
+            pass
+
+    def test_housekeeping_routing(self):
+        self.task.task_type = "housekeeping"
+        self.task.save()
+        next_node = agent_router_node(self.state)
+        self.assertEqual(next_node["next_step"], "housekeeping_node")
+
+    @patch('strategy.workflows.get_llm_client')
+    def test_housekeeping_node_updates_outputs_and_lineage(self, MockClient):
+        mock_result = MagicMock()
+        mock_result.data.model_dump.return_value = {
+            "task_title": "Housekeeping Report",
+            "summary": "Everything looks ok",
+            "verified_documents": [],
+            "system_health_status": "healthy",
+            "next_actions": []
+        }
+        mock_result.telemetry = {"model": "gpt-4o", "prompt_version": "v1.0.0", "total_tokens": 50, "api_cost_usd": 0.001, "execution_time_ms": 100}
+        mock_result.audit = {"raw_prompt": "x", "raw_response": "y"}
+        MockClient().execute.return_value = mock_result
+        
+        result_state = housekeeping_node(self.state)
+        
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.outputs["agent_output"]["system_health_status"], "healthy")
+        self.assertEqual(self.task.execution_lineage["node_name"], "housekeeping_node")
+        
+        self.assertNotIn("next_step", result_state)
+        
+        if self.task.outputs and "generated_document_path" in self.task.outputs:
+            import os
+            try:
+                os.remove(self.task.outputs["generated_document_path"])
+            except Exception:
+                pass

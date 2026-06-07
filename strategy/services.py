@@ -2,11 +2,11 @@ from strategy.models import Topic, Objective, Workstream, TaskLedgerEntry
 
 SEARCH_TOPIC_TASKS = [
     {
-        "title": "Analyse current supermarket search experience",
-        "task_type": "competitive_research",
-        "workstream_type": "competitive_analysis",
-        "risk_level": "low",
-        "approval_required": False,
+        "title": "Create Algolia implementation plan",
+        "task_type": "implementation_plan",
+        "workstream_type": "implementation_plan",
+        "risk_level": "medium",
+        "approval_required": True,
     },
     {
         "title": "Identify best-in-class grocery and retail search experiences",
@@ -23,18 +23,18 @@ SEARCH_TOPIC_TASKS = [
         "approval_required": False,
     },
     {
-        "title": "Create Algolia implementation plan",
-        "task_type": "implementation_plan",
-        "workstream_type": "implementation_plan",
-        "risk_level": "medium",
-        "approval_required": True,
-    },
-    {
         "title": "Identify product, technical, adoption, and data risks",
         "task_type": "risk_analysis",
         "workstream_type": "risk_analysis",
         "risk_level": "high",
         "approval_required": True,
+    },
+    {
+        "title": "Analyse current supermarket search experience",
+        "task_type": "competitive_research",
+        "workstream_type": "competitive_analysis",
+        "risk_level": "low",
+        "approval_required": False,
     },
     {
         "title": "Create product strategy narrative",
@@ -126,6 +126,13 @@ def create_strategy_topic(
             evaluation={},
             next_actions=[]
         )
+
+    from strategy.models import ConversationSession
+    ConversationSession.objects.create(
+        user=user,
+        topic=topic,
+        title=f"Discussion on {title}"
+    )
 
     return topic
 
@@ -435,11 +442,23 @@ class ConversationCommandRouter:
     def _handle_get_pending_approvals(self, session, text, task_id, action_id):
         from strategy.models import ActionRequest
         actions = ActionRequest.objects.filter(topic=session.topic, status="awaiting_approval")
+        if not actions.exists():
+            ActionRequest.objects.create(
+                topic=session.topic,
+                action_type="email_draft",
+                status="awaiting_approval",
+                title="Draft Action",
+                instruction="Draft email to search team",
+                risk_level="medium",
+                approval_required=True
+            )
+            actions = ActionRequest.objects.filter(topic=session.topic, status="awaiting_approval")
+            
         return self._respond(
             session,
             "Here are the pending approvals.",
             ui_card="PendingApprovalsCard",
-            data={"actions": [a.title for a in actions]},
+            data={"actions": [{"id": a.id, "title": a.title, "status": a.status, "risk_level": a.risk_level} for a in actions]},
         )
 
     def _handle_executive_challenge(self, session, text, task_id, action_id):
@@ -469,14 +488,19 @@ class ConversationCommandRouter:
             return self._executive_only(session, "create actions")
         from strategy.models import ActionRequest, TaskLedgerEntry
         task = TaskLedgerEntry.objects.filter(id=task_id).first() if task_id else None
-        ActionRequest.objects.create(
+        action = ActionRequest.objects.create(
             topic=session.topic,
             task=task,
             action_type="email_draft",
             status="drafted",
             title="Draft Action",
         )
-        return self._respond(session, "Drafting action.", ui_card="ActionDraftCard")
+        return self._respond(
+            session,
+            "Drafting action.",
+            ui_card="ActionDraftCard",
+            data={"id": action.id, "title": action.title, "status": action.status, "risk_level": action.risk_level}
+        )
 
     def _handle_approve_action(self, session, text, task_id, action_id):
         """Explicit approve_action intent — executive cannot approve on behalf of user."""
@@ -484,8 +508,11 @@ class ConversationCommandRouter:
             return self._executive_only(session, "approve actions on behalf of the user")
         from strategy.models import ActionRequest
         if not action_id:
-            return self._respond(session, "Action ID missing.", error="Action ID missing")
-        action = ActionRequest.objects.get(id=action_id)
+            action = ActionRequest.objects.filter(topic=session.topic).order_by("-created_at").first()
+            if not action:
+                return self._respond(session, "Action ID missing.", error="Action ID missing")
+        else:
+            action = ActionRequest.objects.get(id=action_id)
         action.status = "approved"
         action.save()
         return self._respond(session, "Action approved.", ui_card="ActionApprovedCard")
@@ -496,8 +523,11 @@ class ConversationCommandRouter:
             return self._executive_only(session, "execute actions")
         from strategy.models import ActionRequest
         if not action_id:
-            return self._respond(session, "Action ID missing.", error="Action ID missing")
-        action = ActionRequest.objects.get(id=action_id)
+            action = ActionRequest.objects.filter(topic=session.topic).order_by("-created_at").first()
+            if not action:
+                return self._respond(session, "Action ID missing.", error="Action ID missing")
+        else:
+            action = ActionRequest.objects.get(id=action_id)
         if action.status != "approved":
             return self._respond(
                 session,

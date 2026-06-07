@@ -49,6 +49,26 @@ export default function MemoryReview({ topicId }: { topicId: string }) {
 
   return (
     <div className="p-8 bg-slate-50 min-h-screen text-slate-800 font-sans">
+      
+      {/* Navigation Breadcrumb */}
+      <div className="mb-4">
+        <a
+          href="/topics"
+          className="inline-flex items-center text-xs font-semibold text-slate-500 hover:text-slate-800 transition-all cursor-pointer group"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-4 w-4 mr-1 transform group-hover:-translate-x-0.5 transition-transform"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back to Dashboard
+        </a>
+      </div>
+
       <header className="mb-8">
         <h1 className="text-2xl font-semibold">Memory Review</h1>
         <p className="text-slate-500 mt-2">Review, edit, and approve context memory before it is persisted for autonomous reuse.</p>

@@ -9,7 +9,7 @@ describe('TraceabilityPanel', () => {
     render(<TopicCommandCentre topicId="1" />);
 
     // 1. TaskDetailDrawer shows TraceabilityPanel
-    const taskRow = screen.getAllByText(/Create Algolia implementation plan/i)[1];
+    const taskRow = (await screen.findAllByText(/Create Algolia implementation plan/i))[1];
     await user.click(taskRow);
 
     const drawer = screen.getByRole('dialog', { name: /Task Detail/i });

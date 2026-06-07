@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
 import { ActionCreateDrawer } from './ActionCreateDrawer';
 import { ActionInbox } from './ActionInbox';
+import { ActionApprovalPanel } from './ActionComponents';
 
 describe('ActionCreateDrawer', () => {
   it('submits a new action request', async () => {
@@ -44,5 +45,41 @@ describe('ActionInbox', () => {
     
     fireEvent.click(screen.getByText('Action 1'));
     expect(onSelectAction).toHaveBeenCalledWith(actions[0]);
+  });
+});
+
+describe('ActionApprovalPanel proposed state handling', () => {
+  it('renders execute button directly for low risk proposed actions', () => {
+    const onExecute = vi.fn();
+    render(
+      <ActionApprovalPanel 
+        status="proposed" 
+        approvalRequired={false} 
+        onApprove={vi.fn()} 
+        onReject={vi.fn()} 
+        onExecute={onExecute} 
+      />
+    );
+    const executeBtn = screen.getByRole('button', { name: /Execute Action/i });
+    expect(executeBtn).not.toBeDisabled();
+    fireEvent.click(executeBtn);
+    expect(onExecute).toHaveBeenCalled();
+  });
+
+  it('renders approval and rejection buttons for high risk proposed actions', () => {
+    const onApprove = vi.fn();
+    render(
+      <ActionApprovalPanel 
+        status="proposed" 
+        approvalRequired={true} 
+        onApprove={onApprove} 
+        onReject={vi.fn()} 
+        onExecute={vi.fn()} 
+      />
+    );
+    expect(screen.getByText('Approval Required')).toBeInTheDocument();
+    const approveBtn = screen.getByRole('button', { name: /Approve Action/i });
+    fireEvent.click(approveBtn);
+    expect(onApprove).toHaveBeenCalled();
   });
 });

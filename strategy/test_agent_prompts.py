@@ -60,6 +60,21 @@ class AgentPromptTestCase(APITestCase):
         self.assertIn("executive readiness", prompt.lower())
         self.assertIn("json only", prompt.lower())
 
+    def test_executive_reviewer_prompt_with_revision_feedback(self):
+        self.task.outputs = {
+            "executive_review": {
+                "overall_assessment": "Weak analysis",
+                "required_revisions": ["Provide more evidence"],
+                "challenge_questions": ["What is the cost?"],
+                "recommendation": "revise"
+            }
+        }
+        self.task.save()
+        prompt, version = build_executive_reviewer_prompt(self.task)
+        self.assertIn("REVISED draft", prompt)
+        self.assertIn("Provide more evidence", prompt)
+        self.assertIn("What is the cost?", prompt)
+
     def test_evaluation_prompt_contents(self):
         prompt, version = build_evaluation_prompt(self.task)
         

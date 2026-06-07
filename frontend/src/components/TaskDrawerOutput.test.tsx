@@ -97,7 +97,7 @@ describe('TaskDrawer Agent Outputs', () => {
     const user = userEvent.setup();
     render(<TopicCommandCentre topicId="1" />);
     
-    await user.click(screen.getByText(/Product Task/i));
+    await user.click(await screen.findByText(/Product Task/i));
     
     expect(screen.getByText(/High latency/i)).toBeInTheDocument();
     expect(screen.getByText(/Power users/i)).toBeInTheDocument();
@@ -111,7 +111,7 @@ describe('TaskDrawer Agent Outputs', () => {
     const user = userEvent.setup();
     render(<TopicCommandCentre topicId="1" />);
     
-    await user.click(screen.getByText(/Strategy Task/i));
+    await user.click(await screen.findByText(/Strategy Task/i));
     
     expect(screen.getByText(/Should we build or buy\?/i)).toBeInTheDocument();
     expect(screen.getByText(/Growing market/i)).toBeInTheDocument();
@@ -123,7 +123,7 @@ describe('TaskDrawer Agent Outputs', () => {
     const user = userEvent.setup();
     render(<TopicCommandCentre topicId="1" />);
     
-    await user.click(screen.getByText(/Product Task/i));
+    await user.click(await screen.findByText(/Product Task/i));
     
     expect(screen.getByText(/Solid plan/i)).toBeInTheDocument();
     expect(screen.getByText(/Clear metrics/i)).toBeInTheDocument();
@@ -136,7 +136,7 @@ describe('TaskDrawer Agent Outputs', () => {
     const user = userEvent.setup();
     render(<TopicCommandCentre topicId="1" />);
     
-    await user.click(screen.getByText(/Product Task/i));
+    await user.click(await screen.findByText(/Product Task/i));
     
     expect(screen.getAllByText(/relevance:/i)[0]).toBeInTheDocument();
     expect(screen.getByText(/Overall Score: 8.1/i)).toBeInTheDocument();
@@ -146,7 +146,7 @@ describe('TaskDrawer Agent Outputs', () => {
     const user = userEvent.setup();
     render(<TopicCommandCentre topicId="1" />);
     
-    await user.click(screen.getByText(/Product Task/i));
+    await user.click(await screen.findByText(/Product Task/i));
     
     expect(screen.getAllByText(/gpt-4o/i)[0]).toBeInTheDocument();
     expect(screen.getAllByText(/v1.2/i)[0]).toBeInTheDocument();
@@ -159,10 +159,118 @@ describe('TaskDrawer Agent Outputs', () => {
     const user = userEvent.setup();
     render(<TopicCommandCentre topicId="1" />);
     
-    await user.click(screen.getByText(/Empty Task/i));
+    await user.click(await screen.findByText(/Empty Task/i));
     
     expect(screen.getByText(/No agent output generated yet/i)).toBeInTheDocument();
     expect(screen.getByText(/Not yet reviewed by executive/i)).toBeInTheDocument();
     expect(screen.getByText(/No agent runs recorded/i)).toBeInTheDocument();
+  });
+
+  it('renders strategy document link card instead of full document preview', async () => {
+    // Modify task in localStorage to include generated document
+    const tasks = JSON.parse(localStorage.getItem('tasks') || '[]');
+    tasks.push({
+      id: 104,
+      title: "Doc Task",
+      workstream: "Testing",
+      risk: "low",
+      status: "completed",
+      approval: "not required",
+      task_type: "implementation_plan",
+      outputs: {
+        agent_output: {
+          product_problem: "Problem",
+          product_recommendation: "Rec",
+          next_actions: ["Action"]
+        },
+        generated_document_name: "task_104_doc_task.md",
+        generated_document_markdown: "# Title\nContent preview text."
+      }
+    });
+    localStorage.setItem('tasks', JSON.stringify(tasks));
+
+    const user = userEvent.setup();
+    render(<TopicCommandCentre topicId="1" />);
+    
+    await user.click(await screen.findByText(/Doc Task/i));
+    
+    // Verify it doesn't show the full document preview text directly inside the task drawer
+    expect(screen.queryByText("Content preview text.")).not.toBeInTheDocument();
+    
+    // Verify it shows the link card with document title and view button
+    expect(screen.getByText("Strategy Document")).toBeInTheDocument();
+    expect(screen.getByText("task_104_doc_task.md")).toBeInTheDocument();
+    expect(screen.getByText("View Document")).toBeInTheDocument();
+  });
+
+  it('renders housekeeping task output fields, health badge and document tables', async () => {
+    // Modify task in localStorage to include housekeeping task
+    const tasks = JSON.parse(localStorage.getItem('tasks') || '[]');
+    tasks.push({
+      id: 105,
+      title: "Housekeeping Task",
+      workstream: "Testing",
+      risk: "low",
+      status: "completed",
+      approval: "not required",
+      task_type: "housekeeping",
+      outputs: {
+        agent_output: {
+          task_title: "Housekeeping Report",
+          summary: "Verified all documents. Found some placeholder text in product plan.",
+          verified_documents: [
+            {
+              filename: "task_101_impl_plan.md",
+              title: "Implementation Plan Document",
+              doc_type: "generated",
+              status: "warning",
+              issues: ["Contains TODO placeholders"]
+            },
+            {
+              filename: "user_20_guide.md",
+              title: "User Guide Document",
+              doc_type: "user",
+              status: "valid",
+              issues: []
+            }
+          ],
+          system_health_status: "warnings_found",
+          next_actions: ["Fix the placeholders in task_101"]
+        },
+        generated_document_name: "task_105_housekeeping.md",
+        generated_document_markdown: "# Housekeeping Report\nHealth status: warnings_found"
+      }
+    });
+    localStorage.setItem('tasks', JSON.stringify(tasks));
+
+    const user = userEvent.setup();
+    render(<TopicCommandCentre topicId="1" />);
+    
+    await user.click(await screen.findByText(/Housekeeping Task/i));
+
+    // 1. Health status banner verification
+    expect(screen.getByText("Warnings Found")).toBeInTheDocument();
+    expect(screen.getByText(/Some documents have minor issues or warnings/i)).toBeInTheDocument();
+
+    // 2. Summary verification
+    expect(screen.getByText(/Verified all documents. Found some placeholder text in product plan./i)).toBeInTheDocument();
+
+    // 3. Document table verification
+    expect(screen.getByText("Implementation Plan Document")).toBeInTheDocument();
+    expect(screen.getByText("task_101_impl_plan.md")).toBeInTheDocument();
+    expect(screen.getByText("User Guide Document")).toBeInTheDocument();
+    expect(screen.getByText("user_20_guide.md")).toBeInTheDocument();
+
+    // 4. Badges and issues
+    expect(screen.getByText("Warning")).toBeInTheDocument();
+    expect(screen.getByText("Valid")).toBeInTheDocument();
+    expect(screen.getByText("Contains TODO placeholders")).toBeInTheDocument();
+
+    // 5. Next Actions
+    expect(screen.getByText("Fix the placeholders in task_101")).toBeInTheDocument();
+
+    // 6. Housekeeping report link card
+    expect(screen.getByText("Housekeeping Report")).toBeInTheDocument();
+    expect(screen.getByText("task_105_housekeeping.md")).toBeInTheDocument();
   });
 });

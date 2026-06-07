@@ -21,19 +21,43 @@ class WorkstreamSerializer(serializers.ModelSerializer):
 
 class TaskLedgerEntrySerializer(serializers.ModelSerializer):
     actions = serializers.SerializerMethodField()
+    risk = serializers.SerializerMethodField()
+    approval = serializers.SerializerMethodField()
+    score = serializers.SerializerMethodField()
+    workstream_title = serializers.ReadOnlyField(source="workstream.title", default=None)
+    feedbacks = serializers.SerializerMethodField()
     
     def get_actions(self, obj):
         actions = obj.actionrequest_set.all()
         return ActionRequestSerializer(actions, many=True).data
 
+    def get_risk(self, obj):
+        return obj.risk_level
+
+    def get_approval(self, obj):
+        return "required" if obj.approval_required else "not_required"
+
+    def get_score(self, obj):
+        latest_scorecard = obj.scorecards.order_by("-created_at").first()
+        if latest_scorecard:
+            return latest_scorecard.overall_score
+        if isinstance(obj.evaluation, dict) and "agent_evaluation" in obj.evaluation:
+            ae = obj.evaluation["agent_evaluation"]
+            if isinstance(ae, dict) and "overall_score" in ae:
+                return ae["overall_score"]
+        return None
+
+    def get_feedbacks(self, obj):
+        return [{"id": f.id, "text": f.raw_feedback, "type": f.feedback_type} for f in obj.feedbackrecord_set.all()]
+
     class Meta:
         model = TaskLedgerEntry
         fields = [
-            "id", "topic", "objective", "workstream", "title", "task_type", 
+            "id", "topic", "objective", "workstream", "workstream_title", "title", "task_type", 
             "owner_agent_label", "status", "risk_level", "approval_required",
             "approved_at", "approved_by", "execution_lineage", "governance",
             "inputs", "telemetry", "outputs", "evaluation", "next_actions",
-            "actions", "created_at", "updated_at"
+            "actions", "created_at", "updated_at", "risk", "approval", "score", "feedbacks"
         ]
 
 class EvaluationScorecardSerializer(serializers.ModelSerializer):
@@ -55,9 +79,34 @@ class FeedbackRecordSerializer(serializers.ModelSerializer):
         ]
 
 class TopicSerializer(serializers.ModelSerializer):
+    tasks_count = serializers.SerializerMethodField()
+    completed_tasks_count = serializers.SerializerMethodField()
+    active_tasks_count = serializers.SerializerMethodField()
+    pending_approvals_count = serializers.SerializerMethodField()
+    workstreams_count = serializers.SerializerMethodField()
+
+    def get_tasks_count(self, obj):
+        return obj.tasks.count()
+
+    def get_completed_tasks_count(self, obj):
+        return obj.tasks.filter(status="completed").count()
+
+    def get_active_tasks_count(self, obj):
+        return obj.tasks.filter(status="in_progress").count()
+
+    def get_pending_approvals_count(self, obj):
+        return obj.tasks.filter(status="proposed", approval_required=True).count()
+
+    def get_workstreams_count(self, obj):
+        return obj.workstreams.count()
+
     class Meta:
         model = Topic
-        fields = ["id", "title", "description", "strategic_context", "owner", "status", "created_at", "updated_at"]
+        fields = [
+            "id", "title", "description", "strategic_context", "owner", "status", 
+            "created_at", "updated_at", "tasks_count", "completed_tasks_count", 
+            "active_tasks_count", "pending_approvals_count", "workstreams_count"
+        ]
         read_only_fields = ["owner"]
         
 class TopicDetailSerializer(TopicSerializer):

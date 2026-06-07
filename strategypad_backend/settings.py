@@ -42,12 +42,12 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    "strategypad_backend.middleware.ForceAuthMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     #"django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "strategypad_backend.middleware.ForceAuthMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -118,3 +118,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = "static/"
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "strategypad_backend.middleware.MiddlewareAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [],
+}

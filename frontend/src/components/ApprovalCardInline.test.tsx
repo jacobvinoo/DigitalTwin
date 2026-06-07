@@ -16,7 +16,7 @@ const mockEmailAction = {
   id: 42,
   title: 'Email Draft to Search Team',
   action_type: 'email_draft',
-  risk_level: 'high',
+  risk_level: 'high' as const,
   status: 'awaiting_approval',
   approval_reason: 'This action will send an email to external recipients.',
   generated_output: {
@@ -30,7 +30,7 @@ const mockMediumAction = {
   id: 7,
   title: 'Stakeholder Update Draft',
   action_type: 'stakeholder_update',
-  risk_level: 'medium',
+  risk_level: 'medium' as const,
   status: 'awaiting_approval',
   approval_reason: 'This will update stakeholder records.',
   generated_output: {},

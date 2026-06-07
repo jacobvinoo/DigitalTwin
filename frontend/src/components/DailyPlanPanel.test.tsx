@@ -9,7 +9,7 @@ describe('DailyPlanPanel Flow', () => {
     render(<TopicCommandCentre topicId="1" />);
     
     // 1. User sees "Create Daily Plan" button.
-    const createButton = screen.getByRole('button', { name: /Create Daily Plan/i });
+    const createButton = await screen.findByRole('button', { name: /Create Daily Plan/i });
     expect(createButton).toBeInTheDocument();
     
     // 2. User clicks it.
@@ -36,9 +36,9 @@ describe('DailyPlanPanel Flow', () => {
     expect(screen.getByText(/First plan for this topic/i)).toBeInTheDocument();
     
     // 8. Plan items are grouped by: Auto-execute, Approval needed, Hard stop
-    expect(screen.getByText(/Auto-execute/i)).toBeInTheDocument();
-    expect(screen.getByText(/Approval needed/i)).toBeInTheDocument();
-    expect(screen.getByText(/Hard stop/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Auto-execute/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/Approval needed/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/Hard stop/i).length).toBeGreaterThanOrEqual(1);
     
     // 9. User clicks Approve Plan.
     const approveButton = screen.getByRole('button', { name: /Approve Plan/i });

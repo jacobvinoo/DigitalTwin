@@ -90,3 +90,19 @@ class EmailDraftOutput(BaseModel):
         if not self.body.strip():
             raise ValueError("Body cannot be empty")
         return self
+
+class HousekeepingDocumentStatus(BaseModel):
+    filename: str
+    title: str
+    doc_type: str
+    status: str
+    issues: list[str] = Field(default_factory=list)
+
+class HousekeepingOutput(BaseModel):
+    task_title: str
+    summary: str
+    verified_documents: list[HousekeepingDocumentStatus]
+    system_health_status: str
+    next_actions: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+

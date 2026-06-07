@@ -29,6 +29,11 @@ class WorkflowAPITestCase(APITestCase):
         plan.refresh_from_db()
         self.assertEqual(plan.status, "approved")
 
+        # Double approval should return HTTP 400
+        response2 = self.client.post(url)
+        self.assertEqual(response2.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", response2.data)
+
     def test_reject_daily_plan_api(self):
         workflow_run, plan = create_daily_plan(self.topic, self.user)
         url = f"/api/daily-plans/{plan.id}/reject/"
@@ -36,6 +41,11 @@ class WorkflowAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         plan.refresh_from_db()
         self.assertEqual(plan.status, "rejected")
+
+        # Double rejection should return HTTP 400
+        response2 = self.client.post(url, {"reason": "Already rejected"})
+        self.assertEqual(response2.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", response2.data)
 
     def test_cannot_start_unapproved_plan(self):
         workflow_run, plan = create_daily_plan(self.topic, self.user)

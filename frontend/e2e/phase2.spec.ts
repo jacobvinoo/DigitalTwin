@@ -1,9 +1,14 @@
 import { test, expect } from '@playwright/test';
 
 test('Complete Phase 2 deterministic workflow', async ({ page }) => {
-  // 1. User logs in. (Assuming mocked or direct navigate to topics for now)
-  // 2. User opens topic: Search for Supermarket
-  await page.goto('/topics/1/command-centre');
+  // 1. User creates a new strategy workspace to ensure clean database state
+  await page.goto('/topics/new');
+  await page.fill('input[name="title"]', 'Search for Supermarket');
+  await page.fill('textarea[name="objective"]', 'Improve supermarket search relevance, customer discovery, and search-led conversion using a structured product and strategy workflow.');
+  await page.fill('textarea[name="strategic_context"]', 'Algolia implementation for supermarket search.');
+  await page.click('button:has-text("Create Strategy Workspace")');
+
+  await expect(page).toHaveURL(/\/topics\/\d+\/command-centre/);
 
   // 3. User clicks Create Daily Plan.
   await page.click('button:has-text("Create daily plan")');
@@ -12,9 +17,9 @@ test('Complete Phase 2 deterministic workflow', async ({ page }) => {
   await expect(page.getByTestId('daily-plan-panel')).toBeVisible();
 
   // 5. User sees grouped tasks: Auto-execute, Approval needed, Hard stop
-  await expect(page.getByText('Auto-execute')).toBeVisible();
-  await expect(page.getByText('Approval needed')).toBeVisible();
-  await expect(page.getByText('Hard stop')).toBeVisible();
+  await expect(page.getByText('Auto-execute').first()).toBeVisible();
+  await expect(page.getByText('Approval needed').first()).toBeVisible();
+  await expect(page.getByText('Hard stop').first()).toBeVisible();
 
   // 6. User approves plan.
   await page.click('button:has-text("Approve Plan")');
@@ -54,7 +59,7 @@ test('Complete Phase 2 deterministic workflow', async ({ page }) => {
   await expect(page.getByText('Execution Lineage')).toBeVisible();
   await expect(page.getByText('Outputs').first()).toBeVisible();
   await expect(page.getByText('Traceability')).toBeVisible();
-  await expect(page.getByText('Evaluation')).toBeVisible();
+  await expect(page.getByText('Evaluation').first()).toBeVisible();
 
   // 16. User returns to Command Centre.
   await page.click('button:has-text("✕")');

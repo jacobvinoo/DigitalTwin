@@ -113,3 +113,19 @@ class AgentContextBuilderTestCase(APITestCase):
         context = AgentContextBuilder(self.task).build()
         self.assertNotIn("Other Topic", context["text"])
         self.assertNotIn("Secret", context["text"])
+
+    def test_builder_includes_previous_draft_and_reviewer_comments(self):
+        self.task.outputs = {
+            "agent_output": {"draft": "My first draft"},
+            "executive_review": {
+                "overall_assessment": "Too generic",
+                "required_revisions": ["Add user research data"],
+                "challenge_questions": ["What is our backup?"]
+            }
+        }
+        self.task.save()
+        context = AgentContextBuilder(self.task).build()
+        self.assertIn("My first draft", context["text"])
+        self.assertIn("Too generic", context["text"])
+        self.assertIn("Add user research data", context["text"])
+        self.assertIn("What is our backup?", context["text"])

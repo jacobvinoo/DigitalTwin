@@ -3,14 +3,12 @@ import { test, expect } from '@playwright/test';
 test('Complete Phase 3 Agent workflow', async ({ page }) => {
   let task1FetchCount = 0;
   await page.route('**/api/tasks/*/', async route => {
-    const taskId = route.request().url().match(/\/api\/tasks\/(\d+)\//)?.[1];
-    
-    // FakeLLMClient structures from the python code
-    const baseTask = {
-      id: parseInt(taskId || '0'),
-      title: "Task " + taskId,
-      status: "completed",
-      risk: taskId === '5' ? 'low' : 'medium',
+    const response = await route.fetch();
+    const json = await response.json();
+    const isLowRisk = json.risk === 'low' || json.risk_level === 'low';
+
+    const modifiedJson = {
+      ...json,
       telemetry: {
         agent_runs: [{
           model: "gpt-4o",
@@ -29,80 +27,76 @@ test('Complete Phase 3 Agent workflow', async ({ page }) => {
       }
     };
 
-    if (taskId === '5') {
-      // low risk -> strategy
-      route.fulfill({ json: {
-        ...baseTask,
-        title: "Analyse current supermarket search experience",
-        task_type: "competitive_research",
-        outputs: {
-          agent_output: {
-            task_title: "t",
-            strategic_question: "q",
-            market_context: "mc",
-            competitor_insights: ["ci"],
-            strategic_options: ["so"],
-            recommended_position: "rp",
-            decision_needed: "dn",
-            risks: ["risk"],
-            assumptions: ["assump"],
-            next_actions: ["na"],
-            evidence_refs: ["ref1", "ref2"],
-            confidence_score: 0.9
-          },
-          executive_review: {
-            overall_assessment: "good",
-            strongest_points: ["s"],
-            weakest_points: ["w"],
-            missing_evidence: ["m"],
-            challenge_questions: ["c"],
-            recommendation: "approve",
-            required_revisions: []
-          }
+    if (isLowRisk) {
+      modifiedJson.status = "completed";
+      modifiedJson.outputs = {
+        agent_output: {
+          task_title: json.title,
+          strategic_question: "q",
+          market_context: "mc",
+          competitor_insights: ["ci"],
+          strategic_options: ["so"],
+          recommended_position: "rp",
+          decision_needed: "dn",
+          risks: ["risk"],
+          assumptions: ["assump"],
+          next_actions: ["na"],
+          evidence_refs: ["ref1", "ref2"],
+          confidence_score: 0.9
+        },
+        executive_review: {
+          overall_assessment: "good",
+          strongest_points: ["s"],
+          weakest_points: ["w"],
+          missing_evidence: ["m"],
+          challenge_questions: ["c"],
+          recommendation: "approve",
+          required_revisions: []
         }
-      }});
+      };
     } else {
       task1FetchCount++;
-      // medium risk -> product plan
-      route.fulfill({ json: {
-        ...baseTask,
-        title: "Create Algolia implementation plan",
-        task_type: "implementation_plan",
-        status: task1FetchCount === 1 ? "proposed" : "completed",
-        approval: "required",
-        governance: { revision_required: task1FetchCount > 1 },
-        outputs: {
-          agent_output: {
-            task_title: "t",
-            product_problem: "problem",
-            target_users: ["users"],
-            user_needs: ["needs"],
-            product_recommendation: "rec",
-            success_metrics: ["metric"],
-            risks: ["risk"],
-            assumptions: ["assumption"],
-            next_actions: ["action"],
-            evidence_refs: ["ref1"],
-            confidence_score: 0.9
-          },
-          executive_review: {
-            overall_assessment: "needs work",
-            strongest_points: ["s"],
-            weakest_points: ["w"],
-            missing_evidence: ["m"],
-            challenge_questions: ["c"],
-            recommendation: "revise",
-            required_revisions: ["Fix architecture"]
-          },
-          output_versions: [{ "v1": "old" }]
-        }
-      }});
+      modifiedJson.status = task1FetchCount === 1 ? "proposed" : "completed";
+      modifiedJson.approval = "required";
+      modifiedJson.governance = { revision_required: task1FetchCount > 1 };
+      modifiedJson.outputs = {
+        agent_output: {
+          task_title: json.title,
+          product_problem: "problem",
+          target_users: ["users"],
+          user_needs: ["needs"],
+          product_recommendation: "rec",
+          success_metrics: ["metric"],
+          risks: ["risk"],
+          assumptions: ["assumption"],
+          next_actions: ["action"],
+          evidence_refs: ["ref1"],
+          confidence_score: 0.9
+        },
+        executive_review: {
+          overall_assessment: "needs work",
+          strongest_points: ["s"],
+          weakest_points: ["w"],
+          missing_evidence: ["m"],
+          challenge_questions: ["c"],
+          recommendation: "revise",
+          required_revisions: ["Fix architecture"]
+        },
+        output_versions: [{ "v1": "old" }]
+      };
     }
+
+    route.fulfill({ json: modifiedJson });
   });
 
-  // 1. User logs in.
-  // 2. Opens topic "Search for Supermarket"
-  await page.goto('/topics/1/command-centre');
+  // 1. User creates a new strategy workspace to ensure clean database state
+  await page.goto('/topics/new');
+  await page.fill('input[name="title"]', 'Search for Supermarket');
+  await page.fill('textarea[name="objective"]', 'Improve supermarket search relevance, customer discovery, and search-led conversion using a structured product and strategy workflow.');
+  await page.fill('textarea[name="strategic_context"]', 'Algolia implementation for supermarket search.');
+  await page.click('button:has-text("Create Strategy Workspace")');
+
+  await expect(page).toHaveURL(/\/topics\/\d+\/command-centre/);
 
   // 3. Creates daily plan
   await page.click('button:has-text("Create daily plan")');
@@ -126,7 +120,9 @@ test('Complete Phase 3 Agent workflow', async ({ page }) => {
   }
 
   // 10. User opens task drawer for low-risk task
-  const responsePromise5 = page.waitForResponse('**/api/tasks/5/');
+  const responsePromise5 = page.waitForResponse(response => 
+    response.url().includes('/api/tasks/') && response.request().method() === 'GET'
+  );
   await page.getByRole('cell', { name: 'Analyse current supermarket search experience' }).click();
   await responsePromise5;
 
@@ -142,7 +138,9 @@ test('Complete Phase 3 Agent workflow', async ({ page }) => {
   await page.click('button:has-text("✕")');
 
   // 12. User approves a medium-risk Algolia implementation plan task
-  const responsePromise1 = page.waitForResponse('**/api/tasks/1/');
+  const responsePromise1 = page.waitForResponse(response => 
+    response.url().includes('/api/tasks/') && response.request().method() === 'GET'
+  );
   await page.getByRole('cell', { name: 'Create Algolia implementation plan' }).first().click();
   await responsePromise1;
   await page.click('button:has-text("Approve")');
@@ -163,7 +161,9 @@ test('Complete Phase 3 Agent workflow', async ({ page }) => {
   // 14. Product Manager Agent generates implementation plan output
   // 15. Executive Reviewer returns revise
   // 16. UI shows revision required.
-  const responsePromise1Rev = page.waitForResponse('**/api/tasks/1/');
+  const responsePromise1Rev = page.waitForResponse(response => 
+    response.url().includes('/api/tasks/') && response.request().method() === 'GET'
+  );
   await page.getByRole('cell', { name: 'Create Algolia implementation plan' }).first().click();
   await responsePromise1Rev;
   await expect(page.getByText('Revision required')).toBeVisible();

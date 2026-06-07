@@ -25,12 +25,12 @@ export const EmailDraftPreview = ({ payload }: { payload: any }) => {
   );
 };
 
-export const ActionApprovalPanel = ({ status, payload, onApprove, onReject, onExecute }: { status: string, payload?: any, onApprove: () => void, onReject: (reason: string) => void, onExecute: () => void }) => {
+export const ActionApprovalPanel = ({ status, payload, approvalRequired, onApprove, onReject, onExecute }: { status: string, payload?: any, approvalRequired?: boolean, onApprove: () => void, onReject: (reason: string) => void, onExecute: () => void }) => {
   const [reason, setReason] = useState('');
 
   const isApproved = status === 'approved';
-  const isAwaiting = status === 'awaiting_approval';
-  const isDrafted = status === 'drafted';
+  const isAwaiting = status === 'awaiting_approval' || (status === 'proposed' && approvalRequired);
+  const isDrafted = status === 'drafted' || (status === 'proposed' && !approvalRequired);
 
   if (!isAwaiting && !isApproved && !isDrafted) return null;
 

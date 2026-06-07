@@ -2,7 +2,7 @@ import pytest
 import json
 from django.contrib.auth import get_user_model
 from django.test import Client
-from strategy.models import Topic, TaskLedgerEntry
+from strategy.models import Topic, TaskLedgerEntry, ActionRequest
 
 pytestmark = pytest.mark.django_db
 
@@ -127,3 +127,101 @@ def test_authz_user_cannot_approve_another_users_tasks(client, user2, task):
     assert response.status_code in [403, 404]
     task.refresh_from_db()
     assert task.status != "approved"
+
+def test_create_task_via_api(client, user1, topic):
+    client.force_login(user1)
+    payload = {
+        "topic": topic.id,
+        "title": "Custom Test Task",
+        "task_type": "generic",
+        "risk_level": "medium"
+    }
+    response = client.post("/api/tasks/", data=json.dumps(payload), content_type="application/json")
+    assert response.status_code == 201
+    data = response.json()
+    assert data["title"] == "Custom Test Task"
+    assert data["status"] == "proposed"
+    assert data["risk_level"] == "medium"
+    assert data["approval_required"] is True
+
+def test_create_task_via_api_forbidden_topic(client, user2, topic):
+    client.force_login(user2)
+    payload = {
+        "topic": topic.id,
+        "title": "Custom Test Task",
+        "task_type": "generic",
+        "risk_level": "medium"
+    }
+    response = client.post("/api/tasks/", data=json.dumps(payload), content_type="application/json")
+    assert response.status_code in [403, 404]
+
+def test_delete_task_via_api(client, user1, task):
+    client.force_login(user1)
+    response = client.delete(f"/api/tasks/{task.id}/")
+    assert response.status_code == 204
+    assert TaskLedgerEntry.objects.filter(id=task.id).count() == 0
+
+def test_delete_task_via_api_forbidden(client, user2, task):
+    client.force_login(user2)
+    response = client.delete(f"/api/tasks/{task.id}/")
+    assert response.status_code == 404
+    assert TaskLedgerEntry.objects.filter(id=task.id).count() == 1
+
+def test_delete_action_request_via_api(client, user1, topic):
+    client.force_login(user1)
+    action_req = ActionRequest.objects.create(
+        topic=topic,
+        title="Action Title",
+        action_type="email",
+        status="proposed",
+        instruction="Send email"
+    )
+    response = client.delete(f"/api/actions/{action_req.id}/")
+    assert response.status_code == 204
+    assert ActionRequest.objects.filter(id=action_req.id).count() == 0
+
+def test_delete_action_request_via_api_forbidden(client, user2, topic):
+    client.force_login(user2)
+    action_req = ActionRequest.objects.create(
+        topic=topic,
+        title="Action Title",
+        action_type="email",
+        status="proposed",
+        instruction="Send email"
+    )
+    response = client.delete(f"/api/actions/{action_req.id}/")
+    assert response.status_code == 404
+    assert ActionRequest.objects.filter(id=action_req.id).count() == 1
+
+def test_approve_changes_api(client, user1, task):
+    import os
+    from django.conf import settings
+    client.force_login(user1)
+    
+    test_file_path = os.path.join(settings.BASE_DIR, "strategy_documents", f"test_approve_{task.id}.md")
+    if os.path.exists(test_file_path):
+        os.remove(test_file_path)
+        
+    task.outputs = {
+        "suggested_document_markdown": "# Suggested Content\nNew line.",
+        "generated_document_path": test_file_path
+    }
+    task.save()
+    
+    response = client.post(f"/api/tasks/{task.id}/approve-changes/")
+    assert response.status_code == 200
+    
+    # Check database outputs updated
+    task.refresh_from_db()
+    assert "suggested_document_markdown" not in task.outputs
+    assert task.outputs["generated_document_markdown"] == "# Suggested Content\nNew line."
+    
+    # Check file exists and has content
+    assert os.path.exists(test_file_path)
+    with open(test_file_path, "r", encoding="utf-8") as f:
+        assert f.read() == "# Suggested Content\nNew line."
+        
+    # Clean up
+    if os.path.exists(test_file_path):
+        os.remove(test_file_path)
+
