@@ -1,5 +1,9 @@
 from rest_framework import serializers
-from strategy.models import Topic, Objective, Workstream, TaskLedgerEntry, MemoryRecord, FeedbackRecord, EvaluationScorecard, ActionRequest, ConversationSession, ConversationMessage
+from strategy.models import (
+    Topic, Objective, Workstream, TaskLedgerEntry, MemoryRecord, FeedbackRecord, EvaluationScorecard, ActionRequest, ConversationSession, ConversationMessage,
+    PromptTemplate, PromptTemplateVersion, AgentPromptAssignment, PromptExecutionTrace, PromptVersionMetrics, PromptPack,
+    EvaluationTemplate, EvaluationPack, EvaluationAssignment, EvaluationRun, AgentEvaluationHistory, ManualSource
+)
 
 class ObjectiveSerializer(serializers.ModelSerializer):
     class Meta:
@@ -103,7 +107,7 @@ class TopicSerializer(serializers.ModelSerializer):
     class Meta:
         model = Topic
         fields = [
-            "id", "title", "description", "strategic_context", "owner", "status", 
+            "id", "title", "description", "strategic_context", "owner", "status", "workspace_type",
             "created_at", "updated_at", "tasks_count", "completed_tasks_count", 
             "active_tasks_count", "pending_approvals_count", "workstreams_count"
         ]
@@ -139,6 +143,36 @@ class ActionRequestSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["approved_by", "approved_at", "status", "execution_result"]
 
+class PromptPackSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PromptPack
+        fields = '__all__'
+
+class EvaluationTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EvaluationTemplate
+        fields = '__all__'
+
+class EvaluationPackSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EvaluationPack
+        fields = '__all__'
+
+class EvaluationAssignmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EvaluationAssignment
+        fields = '__all__'
+
+class EvaluationRunSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EvaluationRun
+        fields = '__all__'
+
+class AgentEvaluationHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AgentEvaluationHistory
+        fields = '__all__'
+
 class ConversationMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ConversationMessage
@@ -153,3 +187,41 @@ class ConversationSessionSerializer(serializers.ModelSerializer):
         fields = ["id", "topic", "user", "active_entity", "title", "status", "created_at", "updated_at", "messages"]
         read_only_fields = ["user", "active_entity", "status", "created_at", "updated_at"]
 
+# ----------------------------------------------------------------------------
+# Prompt Library Serializers
+# ----------------------------------------------------------------------------
+
+class PromptVersionMetricsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PromptVersionMetrics
+        fields = "__all__"
+
+class PromptTemplateVersionSerializer(serializers.ModelSerializer):
+    metrics = PromptVersionMetricsSerializer(read_only=True)
+    
+    class Meta:
+        model = PromptTemplateVersion
+        fields = ["id", "prompt_template", "version_number", "prompt_body", "changelog", "created_at", "metrics"]
+
+class PromptTemplateSerializer(serializers.ModelSerializer):
+    versions = PromptTemplateVersionSerializer(source='prompttemplateversion_set', many=True, read_only=True)
+
+    class Meta:
+        model = PromptTemplate
+        fields = ["id", "name", "category", "description", "prompt_body", "version", "is_system_prompt", "created_at", "versions"]
+        read_only_fields = ["version", "created_at"]
+
+class AgentPromptAssignmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AgentPromptAssignment
+        fields = "__all__"
+
+class ManualSourceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ManualSource
+        fields = '__all__'
+
+class PromptExecutionTraceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PromptExecutionTrace
+        fields = "__all__"

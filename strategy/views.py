@@ -29,13 +29,25 @@ class TopicViewSet(viewsets.ModelViewSet):
         title = request.data.get("title", "Search for Supermarket")
         objective = request.data.get("objective", "")
         strategic_context = request.data.get("strategic_context", "")
+        workspace_type = request.data.get("workspace_type", "strategy")
         
-        topic = create_strategy_topic(
-            user=request.user,
-            title=title,
-            objective_text=objective,
-            strategic_context=strategic_context
-        )
+        if workspace_type == "custom_agent_chain":
+            topic = Topic.objects.create(
+                title=title,
+                description=objective,
+                strategic_context=strategic_context,
+                owner=request.user,
+                workspace_type=workspace_type,
+                status="active"
+            )
+        else:
+            topic = create_strategy_topic(
+                user=request.user,
+                title=title,
+                objective_text=objective,
+                strategic_context=strategic_context
+            )
+            
         serializer = self.get_serializer(topic)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -822,3 +834,111 @@ class ConversationViewSet(viewsets.ModelViewSet):
         )
 
         return Response(response_payload)
+
+# ----------------------------------------------------------------------------
+# Prompt Library ViewSets
+# ----------------------------------------------------------------------------
+
+from .models import (
+    PromptTemplate, PromptTemplateVersion, AgentPromptAssignment, PromptPack, PromptVersionMetrics,
+    EvaluationTemplate, EvaluationPack, EvaluationAssignment,
+    EvaluationRun, AgentEvaluationHistory, ManualSource
+)
+from .serializers import (
+    PromptTemplateSerializer, AgentPromptAssignmentSerializer, PromptPackSerializer, PromptVersionMetricsSerializer,
+    EvaluationTemplateSerializer, EvaluationPackSerializer, EvaluationAssignmentSerializer,
+    EvaluationRunSerializer, AgentEvaluationHistorySerializer, ManualSourceSerializer
+)
+
+class PromptTemplateViewSet(viewsets.ModelViewSet):
+    queryset = PromptTemplate.objects.all().order_by('-id')
+    serializer_class = PromptTemplateSerializer
+    
+    def perform_create(self, serializer):
+        template = serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None, version=1)
+        PromptTemplateVersion.objects.create(
+            prompt_template=template,
+            version_number=template.version,
+            prompt_body=template.prompt_body,
+            changelog="Initial version"
+        )
+        
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        # Only increment version if the prompt_body actually changed
+        new_body = serializer.validated_data.get('prompt_body', instance.prompt_body)
+        
+        if new_body != instance.prompt_body:
+            new_version = instance.version + 1
+            template = serializer.save(version=new_version)
+            PromptTemplateVersion.objects.create(
+                prompt_template=template,
+                version_number=new_version,
+                prompt_body=template.prompt_body,
+                changelog="Updated body"
+            )
+        else:
+            serializer.save()
+
+class AgentPromptAssignmentViewSet(viewsets.ModelViewSet):
+    queryset = AgentPromptAssignment.objects.all().order_by('sort_order')
+    serializer_class = AgentPromptAssignmentSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        agent_id = self.request.query_params.get('agent_id')
+        if agent_id:
+            queryset = queryset.filter(agent_id=agent_id)
+        return queryset
+
+class PromptPackViewSet(viewsets.ModelViewSet):
+    queryset = PromptPack.objects.all()
+    serializer_class = PromptPackSerializer
+
+class PromptVersionMetricsViewSet(viewsets.ModelViewSet):
+    queryset = PromptVersionMetrics.objects.all()
+    serializer_class = PromptVersionMetricsSerializer
+
+# ----------------------------------------------------------------------------
+# Evaluation Library ViewSets
+# ----------------------------------------------------------------------------
+
+class EvaluationTemplateViewSet(viewsets.ModelViewSet):
+    queryset = EvaluationTemplate.objects.all().order_by('-id')
+    serializer_class = EvaluationTemplateSerializer
+
+class EvaluationPackViewSet(viewsets.ModelViewSet):
+    queryset = EvaluationPack.objects.all()
+    serializer_class = EvaluationPackSerializer
+
+class EvaluationAssignmentViewSet(viewsets.ModelViewSet):
+    queryset = EvaluationAssignment.objects.all().order_by('sort_order')
+    serializer_class = EvaluationAssignmentSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        agent_id = self.request.query_params.get('agent_id')
+        if agent_id:
+            queryset = queryset.filter(agent_id=agent_id)
+        return queryset
+
+class EvaluationRunViewSet(viewsets.ModelViewSet):
+    queryset = EvaluationRun.objects.all().order_by('-created_at')
+    serializer_class = EvaluationRunSerializer
+
+class AgentEvaluationHistoryViewSet(viewsets.ModelViewSet):
+    queryset = AgentEvaluationHistory.objects.all().order_by('-created_at')
+    serializer_class = AgentEvaluationHistorySerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        agent_id = self.request.query_params.get('agent_id')
+        if agent_id:
+            queryset = queryset.filter(agent_id=agent_id)
+        return queryset
+
+class ManualSourceViewSet(viewsets.ModelViewSet):
+    queryset = ManualSource.objects.all().order_by('-created_at')
+    serializer_class = ManualSourceSerializer
+    filterset_fields = ['agent']
+

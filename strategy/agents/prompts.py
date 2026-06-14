@@ -1,11 +1,35 @@
 import json
 from strategy.agents.context import AgentContextBuilder
 
-PRODUCT_MANAGER_VERSION = "v1.0.0"
-STRATEGY_MANAGER_VERSION = "v1.0.0"
-EXECUTIVE_REVIEWER_VERSION = "v1.0.0"
-EVALUATION_VERSION = "v1.0.0"
-EMAIL_DRAFT_VERSION = "v1.0.0"
+PRODUCT_MANAGER_VERSION = "v1.1.0"
+STRATEGY_MANAGER_VERSION = "v1.1.0"
+EXECUTIVE_REVIEWER_VERSION = "v1.1.0"
+EVALUATION_VERSION = "v1.1.0"
+EMAIL_DRAFT_VERSION = "v1.1.0"
+
+RESEARCH_PROTOCOL_INSTRUCTIONS = """
+=== RESEARCH PROTOCOL (AAPEV PATTERN & ANTI-HALLUCINATION) ===
+You must rigorously follow the Research Protocol:
+
+1. The AAPEV Pattern:
+   - ASSESS: Understand the problem before acting.
+   - ANALYZE: Search and verify before proposing.
+   - PLAN: Propose approaches with trade-offs.
+   - EXECUTE: Apply changes methodically.
+   - VALIDATE: Test the result, confirm success.
+
+2. Anti-Hallucination & Verification:
+   - NEVER invent function signatures, library versions, API behavior, citations, or URLs.
+   - State your confidence level for every major claim (HIGH / MEDIUM / LOW / UNKNOWN).
+   - Use the appropriate verification tools before answering (e.g., WebSearch for recent facts).
+   - If you cannot verify a claim, explicitly state: "I don't know" or "Cannot verify".
+
+3. Citation Standards:
+   - Academic: Author et al. (Year). Title. Venue. DOI/PMID/ArXiv
+   - Web/Docs: According to [Source Name] (Date): ...
+   - Every claim must be supported by evidence or flagged as unverified.
+==============================================================
+"""
 
 def build_product_manager_prompt(task):
     context = AgentContextBuilder(task).build()
@@ -19,6 +43,7 @@ Check the task context for:
 1. "previous_draft" (under task): Your previous output.
 2. "executive_review_feedback" (under task): Critiques and required revisions from the Executive Reviewer.
 3. "feedback": User-provided steering inputs and specific feedback/instructions.
+4. "reference_documents": Text scraped from URLs provided in the feedback. You MUST read this content and incorporate its detailed facts, features, and analysis into your response.
 
 You MUST revise the previous draft to fully incorporate the user's steering inputs and address all the reviewer's required revisions and challenge questions.
 CRITICAL DIRECTIONS FOR THIS REVISION:
@@ -40,14 +65,26 @@ Context:
 
 {revision_instruction}
 
+{RESEARCH_PROTOCOL_INSTRUCTIONS}
+
 Your job is to analyze the problem and provide product recommendations.
 Your context includes:
 - "executed_topic_actions" (under topic level): Real execution actions already performed on the system.
 - "executed_actions" (under related_outputs for completed tasks): Actions executed for specific previous strategy tasks and their results.
+- "reference_documents": Text scraped from URLs provided in the task inputs or feedback. You MUST deeply analyze these documents and directly incorporate their detailed facts and features into your output.
+- "current_task_research_document": The deep research analysis generated specifically for this task prior to execution. You MUST base your strategy, feature analysis, and plans primarily on the findings in this research document!
 
 You MUST review these executed actions and their results to understand the outcomes of previous execution cycles. Make sure you integrate the feedback, outcomes, and outputs of these executed actions into your strategic analysis for the next run (e.g., adjust timelines, update risk mitigations, refine success metrics, and formulate new recommendations based on actual execution results). Do not ignore actual execution outcomes.
 
-Output Schema Instruction: You must use evidence and do not invent sources.
+Output Schema Instruction: You must use evidence and do not invent sources. 
+When generating `detailed_feature_analysis`, you MUST provide a deep architectural and strategic breakdown of each feature. Do NOT just list features. For each feature, analyze:
+1. What benefits it brings and its business impact.
+2. The complexity to implement.
+3. What data the feature requires to function.
+4. The timeline or phase to implement it.
+5. Other blueprints or use cases from other vendors or implementations in the industry to prove viability.
+
+When generating `execution_timeline`, you MUST generate a detailed Phase Plan (e.g. 30-Day, 60-Day, 90-Day). For EACH phase, explicitly list WHICH features from the `detailed_feature_analysis` you will turn on, and the key tasks required to achieve this. DO NOT leave this blank.
 
 Return JSON only matching the exact schema requirements.
 """
@@ -65,6 +102,7 @@ Check the task context for:
 1. "previous_draft" (under task): Your previous output.
 2. "executive_review_feedback" (under task): Critiques and required revisions from the Executive Reviewer.
 3. "feedback": User-provided steering inputs and specific feedback/instructions.
+4. "reference_documents": Text scraped from URLs provided in the feedback. You MUST read this content and incorporate its detailed facts, features, and analysis into your response.
 
 You MUST revise the previous draft to fully incorporate the user's steering inputs and address all the reviewer's required revisions and challenge questions.
 CRITICAL DIRECTIONS FOR THIS REVISION:
@@ -85,10 +123,14 @@ Context:
 
 {revision_instruction}
 
+{RESEARCH_PROTOCOL_INSTRUCTIONS}
+
 Your job is to define strategic options and trade-offs, and note any decision-needed.
 Your context includes:
 - "executed_topic_actions" (under topic level): Real execution actions already performed on the system.
 - "executed_actions" (under related_outputs for completed tasks): Actions executed for specific previous strategy tasks and their results.
+- "reference_documents": Text scraped from URLs provided in the task inputs or feedback. You MUST deeply analyze these documents and directly incorporate their detailed facts and features into your output.
+- "current_task_research_document": The deep research analysis generated specifically for this task prior to execution. You MUST base your strategy, feature analysis, and plans primarily on the findings in this research document!
 
 You MUST review these executed actions and their results to understand the outcomes of previous execution cycles. Make sure you integrate the feedback, outcomes, and outputs of these executed actions into your strategic analysis for the next run (e.g., adjust timelines, update risk mitigations, refine success metrics, and formulate new recommendations based on actual execution results). Do not ignore actual execution outcomes.
 
@@ -246,3 +288,45 @@ Return JSON only matching the exact schema requirements.
 """
     return prompt, HOUSEKEEPING_VERSION
 
+RESEARCH_PIPELINE_VERSION = "v1.0.0"
+
+def build_research_pipeline_prompt(task):
+    context = AgentContextBuilder(task).build()
+    
+    outputs = task.outputs or {}
+    revision_instruction = ""
+    if "agent_output" in outputs:
+        revision_instruction = """
+IMPORTANT: You are revising a previous draft. 
+Check the task context for:
+1. "previous_draft" (under task): Your previous output.
+2. "executive_review_feedback" (under task): Critiques and required revisions from the Executive Reviewer.
+3. "feedback": User-provided steering inputs and specific feedback/instructions.
+
+You MUST revise the previous draft to fully incorporate the user's steering inputs and address all the reviewer's required revisions and challenge questions.
+CRITICAL DIRECTIONS FOR THIS REVISION:
+- Do NOT use placeholders, generic descriptions, or "TBD".
+- Make your analysis highly detailed, specific, and grounded in real-world examples and evidence.
+"""
+
+    prompt = f"""
+You are the Research Synthesizer Agent for StrategyPad.
+Role: Expert Researcher
+Task: {task.title}
+Topic Context: {task.topic.title}
+
+Prompt version: {RESEARCH_PIPELINE_VERSION}
+
+Context:
+{context['text']}
+
+{revision_instruction}
+
+{RESEARCH_PROTOCOL_INSTRUCTIONS}
+
+Your job is to conduct rigorous research and provide best-in-class analysis for the given task.
+If the task asks for "best-in-class" examples (e.g. grocery search experiences), you MUST provide SPECIFIC companies (e.g. Amazon Fresh, Instacart, Ocado, Walmart, Target) and describe EXACTLY what makes their experiences best-in-class based on actual industry practices (e.g. semantic search, personalized ranking, typo tolerance).
+
+Return JSON only matching the exact schema requirements.
+"""
+    return prompt, RESEARCH_PIPELINE_VERSION

@@ -9,9 +9,26 @@ def owner():
     User = get_user_model()
     return User.objects.create_user(username="pm_alice", password="password")
 
-def test_create_strategy_topic_service(owner):
+def test_create_strategy_topic_service(owner, monkeypatch):
     try:
-        from strategy.services import create_strategy_topic
+        from strategy.services import create_strategy_topic, get_default_tasks
+        from strategy.agents.client import LLMClient
+        from strategy.agents.schemas import TaskGenerationOutput, TaskDefinition
+        
+        class MockLLMResult:
+            def __init__(self):
+                self.data = TaskGenerationOutput(
+                    tasks=[
+                        TaskDefinition(**task_def) for task_def in get_default_tasks()
+                    ]
+                )
+                self.telemetry = {}
+                self.audit = {}
+                
+        def mock_execute(*args, **kwargs):
+            return MockLLMResult()
+            
+        monkeypatch.setattr(LLMClient, "execute", mock_execute)
     except ImportError:
         pytest.fail("FAIL: create_strategy_topic service does not exist")
         
@@ -19,13 +36,13 @@ def test_create_strategy_topic_service(owner):
     
     # 1. create_strategy_topic() creates one topic.
     assert Topic.objects.count() == 1
-    assert topic.title == "Search for Supermarket"
+    assert topic.title == "New Strategic Initiative"
     assert topic.owner == owner
     
     # 2. Objective is correct
     objectives = Objective.objects.filter(topic=topic)
     assert objectives.count() == 1
-    assert "Improve supermarket search relevance" in objectives.first().title
+    assert "strategy and implementation plan" in objectives.first().title
     
     # 3. It creates all seven workstreams.
     workstreams = Workstream.objects.filter(topic=topic)
@@ -53,7 +70,7 @@ def test_create_strategy_topic_service(owner):
     assert risk_task.approval_required is True
     
     # 6. Low-risk research tasks do not require approval
-    research_task = tasks.get(title__icontains="Analyse current supermarket search experience")
+    research_task = tasks.get(title__icontains="Analyse current state and competitor landscape")
     assert research_task.risk_level == "low"
     assert research_task.approval_required is False
     

@@ -129,3 +129,42 @@ class AgentContextBuilderTestCase(APITestCase):
         self.assertIn("Too generic", context["text"])
         self.assertIn("Add user research data", context["text"])
         self.assertIn("What is our backup?", context["text"])
+
+    @pytest.mark.django_db
+    def test_builder_extracts_and_fetches_urls_for_reference_documents(self):
+        import json
+        from unittest.mock import patch
+        
+        self.task.inputs = {"reference": "Check out https://www.algolia.com/doc/guides/get-started"}
+        self.task.save()
+        
+        FeedbackRecord.objects.create(
+            topic=self.topic,
+            task=self.task,
+            raw_feedback="Also look at http://example.com/pricing",
+            feedback_type="quality",
+            sentiment="neutral"
+        )
+        
+        class MockResponse:
+            def __init__(self, text, status_code=200):
+                self.text = text
+                self.status_code = status_code
+
+        def mock_get(url, *args, **kwargs):
+            if "algolia.com" in url:
+                return MockResponse("<html><body><h1>Algolia Guide</h1><p>Learn to use the index.</p></body></html>")
+            elif "example.com" in url:
+                return MockResponse("<html><body><p>Pricing is $99/mo.</p></body></html>")
+            return MockResponse("", status_code=404)
+
+        with patch("strategy.agents.context.requests.get", side_effect=mock_get):
+            context = AgentContextBuilder(self.task).build()
+            context_data = json.loads(context["text"])
+            
+            ref_docs = context_data.get("reference_documents", [])
+            self.assertEqual(len(ref_docs), 2)
+            
+            content_str = " ".join([d["content"] for d in ref_docs])
+            self.assertIn("Algolia Guide Learn to use the index.", content_str)
+            self.assertIn("Pricing is $99/mo.", content_str)

@@ -125,7 +125,7 @@ export default function TopicCreateWizard({ onSubmit }: TopicCreateWizardProps) 
             <h3 className="font-medium text-slate-800">Market Metrics</h3>
           </div>
           <div className="rounded-md bg-white p-3 shadow-sm border">
-            <h3 className="font-medium text-slate-800">Algolia Implementation Plan</h3>
+            <h3 className="font-medium text-slate-800">Implementation Plan</h3>
           </div>
           <div className="rounded-md bg-white p-3 shadow-sm border">
             <h3 className="font-medium text-slate-800">Risk Analysis</h3>

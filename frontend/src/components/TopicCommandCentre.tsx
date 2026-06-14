@@ -54,7 +54,7 @@ export default function TopicCommandCentre({ topicId }: { topicId: string }) {
         setWorkstreams([
           { title: "Competitive Analysis", count: 2 },
           { title: "Market Metrics", count: 1 },
-          { title: "Algolia Implementation Plan", count: 1 },
+          { title: "Implementation Plan", count: 1 },
           { title: "Risk Analysis", count: 1 },
           { title: "Product Strategy", count: 1 },
           { title: "Roadmap", count: 1 },
@@ -519,12 +519,34 @@ export default function TopicCommandCentre({ topicId }: { topicId: string }) {
 
       {/* Top Area */}
       <header className="flex flex-col md:flex-row md:items-center justify-between bg-white p-6 rounded-2xl shadow-sm border mb-6">
-        <div>
+        <div className="flex-1">
           <div className="flex items-center space-x-3">
             <h1 className="text-2xl font-semibold">{topic.title}</h1>
             <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">{topic.status}</span>
           </div>
-          <p className="mt-2 text-slate-600 max-w-2xl">Objective: {topic.objective}</p>
+          
+          <div className="mt-4 space-y-3">
+            {topic.objectives && topic.objectives.length > 0 && (
+              <div>
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Primary Objective</h3>
+                <p className="mt-1 text-slate-700 text-sm max-w-3xl">{topic.objectives[0].title}</p>
+              </div>
+            )}
+            
+            {topic.description && (
+              <div>
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Description</h3>
+                <p className="mt-1 text-slate-700 text-sm max-w-3xl">{topic.description}</p>
+              </div>
+            )}
+
+            {topic.strategic_context && (
+              <div>
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Strategic Context</h3>
+                <p className="mt-1 text-slate-700 text-sm max-w-3xl whitespace-pre-wrap">{topic.strategic_context}</p>
+              </div>
+            )}
+          </div>
         </div>
         <div className="mt-4 md:mt-0 flex space-x-3">
           <button onClick={() => setShowDailyPlan(true)} className="px-4 py-2 bg-white text-slate-700 rounded-md border shadow-sm hover:bg-slate-50 text-sm font-medium">

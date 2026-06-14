@@ -48,7 +48,12 @@ class LLMClient:
             })
             
             parsed = json.loads(raw_text)
-            validated = schema_class.model_validate(parsed)
+            
+            if schema_class:
+                validated = schema_class.model_validate(parsed)
+            else:
+                validated = parsed
+                
             telemetry["execution_time_ms"] = int((time.monotonic() - started) * 1000)
             
             logger.info("LLM Response received successfully in %dms. Tokens: %d (Cost: $%s)\nResponse:\n%s", 
@@ -130,10 +135,24 @@ class LLMClient:
         else:
             payload["response_format"] = {"type": "json_object"}
         
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        max_retries = 5
+        base_delay = 2
         
-        if response.status_code != 200:
-            raise RuntimeError(f"OpenAI API request failed: {response.status_code} - {response.text}")
+        for attempt in range(max_retries):
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            
+            if response.status_code == 429:
+                if attempt < max_retries - 1:
+                    sleep_time = base_delay * (2 ** attempt)
+                    logger.warning(f"OpenAI API rate limit hit. Retrying in {sleep_time}s... (Attempt {attempt+1}/{max_retries})")
+                    time.sleep(sleep_time)
+                    continue
+                else:
+                    raise RuntimeError(f"OpenAI API rate limit exceeded after {max_retries} attempts: {response.text}")
+            elif response.status_code != 200:
+                raise RuntimeError(f"OpenAI API request failed: {response.status_code} - {response.text}")
+            
+            break # Success, exit retry loop
             
         res_json = response.json()
         raw_text = res_json["choices"][0]["message"]["content"]

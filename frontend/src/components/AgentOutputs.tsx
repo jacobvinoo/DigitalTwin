@@ -317,14 +317,13 @@ export function AgentOutputPanel({ task, onViewDocument }: { task: any, onViewDo
           <div className="mt-2 flex items-center space-x-3">
             <span className="text-[10px] font-mono bg-white border border-emerald-100 px-2 py-0.5 rounded text-slate-600 break-all">{task.outputs?.generated_document_path || 'In Workspace'}</span>
             {task.outputs?.generated_document_path && (
-              <a
-                href={`file://${task.outputs.generated_document_path}`}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                onClick={() => navigator.clipboard.writeText(task.outputs.generated_document_path)}
                 className="text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded transition whitespace-nowrap shadow-2xs cursor-pointer"
+                title="Copy file path to clipboard"
               >
-                Open File
-              </a>
+                Copy Path
+              </button>
             )}
           </div>
         </div>

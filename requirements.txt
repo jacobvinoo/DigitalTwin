@@ -1,0 +1,6 @@
+Django
+djangorestframework
+pytest
+pytest-django
+langgraph
+pydantic

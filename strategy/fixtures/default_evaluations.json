@@ -1,0 +1,309 @@
+{
+  "evaluation_library_name": "StrategyPad Default Evaluation Library",
+  "version": "1.0",
+  "templates": [
+    {
+      "key": "evaluation.quality_score",
+      "name": "Quality Score",
+      "category": "quality",
+      "version": 1,
+      "description": "Evaluates overall usefulness, clarity, structure, completeness, and practical quality of an agent output.",
+      "score_field": "quality_score",
+      "weight_default": 0.25,
+      "scoring_scale": {
+        "min": 1,
+        "max": 10,
+        "interpretation": {
+          "1-3": "Poor: unclear, incomplete, or not usable",
+          "4-6": "Adequate: partially useful but needs material revision",
+          "7-8": "Good: usable with minor improvements",
+          "9-10": "Excellent: clear, complete, decision-ready"
+        }
+      },
+      "rubric": [
+        {
+          "metric": "clarity",
+          "weight": 0.25,
+          "question": "Is the output easy to understand and free of unnecessary complexity?"
+        },
+        {
+          "metric": "structure",
+          "weight": 0.20,
+          "question": "Is the output well organised with logical flow and useful sections?"
+        },
+        {
+          "metric": "completeness",
+          "weight": 0.25,
+          "question": "Does the output answer the task fully without major gaps?"
+        },
+        {
+          "metric": "specificity",
+          "weight": 0.15,
+          "question": "Is the output specific to the task context rather than generic?"
+        },
+        {
+          "metric": "actionability",
+          "weight": 0.15,
+          "question": "Can the user take action based on the output?"
+        }
+      ],
+      "evaluation_prompt": "Evaluate the agent output for overall quality. Score clarity, structure, completeness, specificity, and actionability from 1 to 10. Penalise generic, vague, incomplete, or poorly structured content. CRITICAL REQUIREMENT: To receive a medium score (4-6), the output MUST cite at least 20-30 unique sources. To receive a high score (7-10), the output MUST cite at least 100 unique sources. If the output contains fewer than 20 sources, the score MUST be 1-3 regardless of other quality factors. Return JSON only using the configured scoring schema.",
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "quality_score",
+          "metric_scores",
+          "strengths",
+          "weaknesses",
+          "improvement_suggestions"
+        ],
+        "properties": {
+          "quality_score": { "type": "number", "minimum": 1, "maximum": 10 },
+          "metric_scores": {
+            "type": "object",
+            "properties": {
+              "clarity": { "type": "number", "minimum": 1, "maximum": 10 },
+              "structure": { "type": "number", "minimum": 1, "maximum": 10 },
+              "completeness": { "type": "number", "minimum": 1, "maximum": 10 },
+              "specificity": { "type": "number", "minimum": 1, "maximum": 10 },
+              "actionability": { "type": "number", "minimum": 1, "maximum": 10 }
+            }
+          },
+          "strengths": { "type": "array", "items": { "type": "string" } },
+          "weaknesses": { "type": "array", "items": { "type": "string" } },
+          "improvement_suggestions": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    {
+      "key": "evaluation.evidence_score",
+      "name": "Evidence Score",
+      "category": "evidence",
+      "version": 1,
+      "description": "Evaluates whether claims are backed by credible, relevant, and traceable evidence.",
+      "score_field": "evidence_score",
+      "weight_default": 0.30,
+      "scoring_scale": {
+        "min": 1,
+        "max": 10,
+        "interpretation": {
+          "1-3": "Weak: mostly unsupported or poor-quality evidence",
+          "4-6": "Moderate: some evidence but important gaps remain",
+          "7-8": "Good: most key claims are supported",
+          "9-10": "Strong: claims are well supported by credible, traceable evidence"
+        }
+      },
+      "rubric": [
+        {
+          "metric": "citation_coverage",
+          "weight": 0.25,
+          "question": "Do material claims have citations or evidence references?"
+        },
+        {
+          "metric": "source_quality",
+          "weight": 0.25,
+          "question": "Are the sources credible, authoritative, and relevant?"
+        },
+        {
+          "metric": "source_diversity",
+          "weight": 0.15,
+          "question": "Does the output use multiple relevant source types rather than one weak source?"
+        },
+        {
+          "metric": "evidence_to_claim_fit",
+          "weight": 0.25,
+          "question": "Does the evidence directly support the claims being made?"
+        },
+        {
+          "metric": "freshness",
+          "weight": 0.10,
+          "question": "Are time-sensitive claims supported by recent sources?"
+        }
+      ],
+      "evaluation_prompt": "Evaluate evidence quality. Check whether every material claim is supported by evidence_refs, citations, retrieved documents, or recorded sources. Penalise unsupported claims, weak source quality, stale sources for current topics, and sources that do not directly support the claim. Return JSON only.",
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "evidence_score",
+          "metric_scores",
+          "unsupported_claims",
+          "weak_sources",
+          "missing_evidence",
+          "recommended_sources"
+        ],
+        "properties": {
+          "evidence_score": { "type": "number", "minimum": 1, "maximum": 10 },
+          "metric_scores": {
+            "type": "object",
+            "properties": {
+              "citation_coverage": { "type": "number", "minimum": 1, "maximum": 10 },
+              "source_quality": { "type": "number", "minimum": 1, "maximum": 10 },
+              "source_diversity": { "type": "number", "minimum": 1, "maximum": 10 },
+              "evidence_to_claim_fit": { "type": "number", "minimum": 1, "maximum": 10 },
+              "freshness": { "type": "number", "minimum": 1, "maximum": 10 }
+            }
+          },
+          "unsupported_claims": { "type": "array", "items": { "type": "string" } },
+          "weak_sources": { "type": "array", "items": { "type": "string" } },
+          "missing_evidence": { "type": "array", "items": { "type": "string" } },
+          "recommended_sources": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    {
+      "key": "evaluation.executive_score",
+      "name": "Executive Score",
+      "category": "executive",
+      "version": 1,
+      "description": "Evaluates whether the output is suitable for senior leadership decision-making.",
+      "score_field": "executive_score",
+      "weight_default": 0.20,
+      "scoring_scale": {
+        "min": 1,
+        "max": 10,
+        "interpretation": {
+          "1-3": "Not executive-ready",
+          "4-6": "Partially useful but too unclear or incomplete",
+          "7-8": "Mostly executive-ready",
+          "9-10": "Strong executive-ready decision support"
+        }
+      },
+      "rubric": [
+        {
+          "metric": "decision_usefulness",
+          "weight": 0.30,
+          "question": "Does the output help the executive make or understand a decision?"
+        },
+        {
+          "metric": "business_impact",
+          "weight": 0.25,
+          "question": "Does it clearly connect to business, product, customer, financial, or operational impact?"
+        },
+        {
+          "metric": "brevity",
+          "weight": 0.15,
+          "question": "Is it concise enough for a time-poor executive?"
+        },
+        {
+          "metric": "tradeoff_clarity",
+          "weight": 0.15,
+          "question": "Are options, trade-offs, and consequences clear?"
+        },
+        {
+          "metric": "risk_visibility",
+          "weight": 0.15,
+          "question": "Are key risks and uncertainties visible?"
+        }
+      ],
+      "evaluation_prompt": "Evaluate executive readiness. Assess whether this output helps a senior leader make a decision. Penalise long background, weak recommendations, unclear impact, missing trade-offs, and hidden risks. Return JSON only.",
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "executive_score",
+          "metric_scores",
+          "decision_supported",
+          "executive_summary_quality",
+          "key_gaps",
+          "recommended_revisions"
+        ],
+        "properties": {
+          "executive_score": { "type": "number", "minimum": 1, "maximum": 10 },
+          "metric_scores": {
+            "type": "object",
+            "properties": {
+              "decision_usefulness": { "type": "number", "minimum": 1, "maximum": 10 },
+              "business_impact": { "type": "number", "minimum": 1, "maximum": 10 },
+              "brevity": { "type": "number", "minimum": 1, "maximum": 10 },
+              "tradeoff_clarity": { "type": "number", "minimum": 1, "maximum": 10 },
+              "risk_visibility": { "type": "number", "minimum": 1, "maximum": 10 }
+            }
+          },
+          "decision_supported": { "type": "string" },
+          "executive_summary_quality": { "type": "string" },
+          "key_gaps": { "type": "array", "items": { "type": "string" } },
+          "recommended_revisions": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    {
+      "key": "evaluation.hallucination_score",
+      "name": "Hallucination Score",
+      "category": "safety",
+      "version": 1,
+      "description": "Evaluates whether the output avoids unsupported, invented, or overconfident claims.",
+      "score_field": "hallucination_score",
+      "weight_default": 0.25,
+      "scoring_scale": {
+        "min": 1,
+        "max": 10,
+        "interpretation": {
+          "1-3": "High hallucination risk",
+          "4-6": "Moderate hallucination risk",
+          "7-8": "Low hallucination risk",
+          "9-10": "Very low hallucination risk"
+        }
+      },
+      "rubric": [
+        {
+          "metric": "unsupported_claim_control",
+          "weight": 0.35,
+          "question": "Does the output avoid unsupported factual claims?"
+        },
+        {
+          "metric": "uncertainty_handling",
+          "weight": 0.20,
+          "question": "Does it clearly mark uncertainty, assumptions, and unknowns?"
+        },
+        {
+          "metric": "source_alignment",
+          "weight": 0.25,
+          "question": "Do claims align with provided sources and retrieved evidence?"
+        },
+        {
+          "metric": "overconfidence_control",
+          "weight": 0.10,
+          "question": "Does the output avoid presenting weak evidence as certain?"
+        },
+        {
+          "metric": "fabrication_detection",
+          "weight": 0.10,
+          "question": "Are there signs of invented names, numbers, references, dates, or examples?"
+        }
+      ],
+      "evaluation_prompt": "Evaluate hallucination risk. Identify unsupported claims, invented details, overstated certainty, missing uncertainty labels, and claims not grounded in available evidence. A high hallucination_score means low hallucination risk. Return JSON only.",
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "hallucination_score",
+          "risk_level",
+          "metric_scores",
+          "suspect_claims",
+          "fabrication_indicators",
+          "uncertainty_failures",
+          "required_fixes"
+        ],
+        "properties": {
+          "hallucination_score": { "type": "number", "minimum": 1, "maximum": 10 },
+          "risk_level": {
+            "type": "string",
+            "enum": ["very_low", "low", "medium", "high", "critical"]
+          },
+          "metric_scores": {
+            "type": "object",
+            "properties": {
+              "unsupported_claim_control": { "type": "number", "minimum": 1, "maximum": 10 },
+              "uncertainty_handling": { "type": "number", "minimum": 1, "maximum": 10 },
+              "source_alignment": { "type": "number", "minimum": 1, "maximum": 10 },
+              "overconfidence_control": { "type": "number", "minimum": 1, "maximum": 10 },
+              "fabrication_detection": { "type": "number", "minimum": 1, "maximum": 10 }
+            }
+          },
+          "suspect_claims": { "type": "array", "items": { "type": "string" } },
+          "fabrication_indicators": { "type": "array", "items": { "type": "string" } },
+          "uncertainty_failures": { "type": "array", "items": { "type": "string" } },
+          "required_fixes": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import sys
 import os
 from typing import TypedDict, List, Dict, Any, Optional
 from django.utils import timezone
-from strategy.models import WorkflowRun, WorkflowStep, DailyPlan, TaskLedgerEntry, ActionRequest
+from strategy.models import WorkflowRun, WorkflowStep, DailyPlan, TaskLedgerEntry, ActionRequest, ResearchBrief, SourceRecord, EvidenceQuote, ResearchFinding, ResearchDocument
 from strategy.services import classify_action_risk
 from langgraph.graph import StateGraph, END
 
@@ -42,6 +42,8 @@ def get_llm_client(agent_type="default"):
             return FakeLLMClient(response_json='{"relevance": 9, "quality": 10, "evidence_strength": 9, "actionability": 9, "executive_readiness": 9, "style_alignment": 9, "local_context": 9, "novelty": 8, "overall_score": 9.0, "evaluator_notes": "The strategy manager output provides direct, actionable decisions and supports them with concrete industry references. Extremely high quality assessment."}')
         elif agent_type == "housekeeping":
             return FakeLLMClient(response_json='{"task_title": "Document Review", "summary": "Successfully ran housekeeping verification on strategy documents repository. Checked for placeholders, empty files, and syntax correctness.", "verified_documents": [{"filename": "task_154_identify_best-in-class_grocery_and_retail_search_experiences.md", "title": "Identify best-in-class grocery and retail search experiences", "doc_type": "generated", "status": "valid", "issues": []}, {"filename": "task_155_define_search_relevance_and_conversion_metrics.md", "title": "Define search relevance and conversion metrics", "doc_type": "generated", "status": "warning", "issues": ["Contains placeholder values (e.g. TBD)"]}], "system_health_status": "warnings_found", "next_actions": ["Resolve placeholders in task_155_define_search_relevance_and_conversion_metrics.md"], "evidence_refs": ["Internal documents health check script v1.0"]}')
+        elif agent_type == "research":
+            return FakeLLMClient(response_json='{"task_title": "Research Task", "summary": "A mock summary", "current_state": "Good", "key_findings": ["Found this", "Found that"], "methodology_note": "Mocked", "sources": ["Source 1"], "confidence_level": "HIGH", "limitations": "None", "search_experience_principles": [], "relevance_and_ranking_factors": [], "semantic_search_considerations": [], "search_strategy": "Mocked", "synthesis": "Mocked", "evidence_table": [], "gaps_and_future_directions": "Mocked"}')
         return FakeLLMClient(response_json="{}")
     return LLMClient()
 
@@ -379,6 +381,146 @@ def strategy_manager_node(state: StrategyWorkflowState) -> StrategyWorkflowState
         task.save(update_fields=["status", "telemetry"])
         return {**state, "status": "failed", "error_message": str(exc)}
 
+def research_pipeline_node(state: StrategyWorkflowState) -> StrategyWorkflowState:
+    state["visited_nodes"].append("research_pipeline_node")
+    workflow = WorkflowRun.objects.get(id=state["workflow_run_id"])
+    task = TaskLedgerEntry.objects.get(id=state["current_task_id"])
+
+    try:
+        from strategy.agents.prompts import build_research_pipeline_prompt
+        from strategy.agents.schemas import ResearchOutput
+        from django.conf import settings
+        
+        prompt, version = build_research_pipeline_prompt(task)
+        
+        result = get_llm_client("research").execute(
+            prompt=prompt,
+            prompt_version=version,
+            schema_class=ResearchOutput,
+            model=getattr(settings, "STRATEGYPAD_AGENT_MODEL", "gpt-4o"),
+        )
+        
+        data = result.data
+        
+        title_lower = task.title.lower()
+        if "literature review" in title_lower:
+            markdown_content = f"""## Literature Review: {data.task_title}
+
+### Search Strategy
+{data.search_strategy}
+
+### Synthesis
+{data.synthesis}
+
+### Evidence Table
+"""
+            for row in data.evidence_table:
+                markdown_content += f"- {row}\n"
+            markdown_content += f"""
+### Gaps and Future Directions
+{data.gaps_and_future_directions}
+"""
+        else:
+            markdown_content = f"""## {data.task_title} Analysis
+
+### Summary
+{data.summary}
+
+### Current State (2024-2025)
+{data.current_state}
+
+### Key Findings
+"""
+            for f in data.key_findings:
+                markdown_content += f"- {f}\n"
+                
+            markdown_content += f"""
+### Methodology Note
+{data.methodology_note}
+
+### Sources
+"""
+            for s in data.sources:
+                markdown_content += f"- {s}\n"
+
+            markdown_content += f"""
+**Confidence**: {data.confidence_level}
+**Limitations**: {data.limitations}
+"""
+
+        if "search" in title_lower:
+            markdown_content += "\n## Search Experience Principles\n"
+            for p in data.search_experience_principles:
+                markdown_content += f"- {p}\n"
+            markdown_content += "\n## Relevance and Ranking Factors\n"
+            for r in data.relevance_and_ranking_factors:
+                markdown_content += f"- {r}\n"
+            markdown_content += "\n## Semantic Search Considerations\n"
+            for s in data.semantic_search_considerations:
+                markdown_content += f"- {s}\n"
+
+        brief, _ = ResearchBrief.objects.get_or_create(
+            topic=task.topic,
+            task=task,
+            defaults={
+                "objective": data.task_title,
+                "status": "completed"
+            }
+        )
+        
+        doc, _ = ResearchDocument.objects.get_or_create(
+            task=task,
+            defaults={
+                "title": f"Research Document: {task.title}",
+                "markdown": markdown_content,
+                "status": "draft",
+                "doc_type": "research_report"
+            }
+        )
+        if doc.markdown != markdown_content:
+            doc.markdown = markdown_content
+            doc.save()
+
+        task.outputs = {
+            **(task.outputs or {}),
+            "agent_output": {
+                **data.model_dump(),
+                "document_generated": True,
+                "summary": f"Research document '{task.title}' generated successfully."
+            },
+            "generated_document_markdown": markdown_content,
+            "generated_document_name": f"{task.title}.md",
+        }
+        generate_markdown_document(task)
+        task.save()
+        
+        run_entry = {
+            **result.telemetry,
+            "node_name": "research_pipeline_node",
+            "prompt": result.audit.get("raw_prompt"),
+            "response": result.audit.get("raw_response"),
+            "error": None
+        }
+        
+    except Exception as exc:
+        print(f"ERROR in research_pipeline_node: {exc}")
+        run_entry = {
+            "node_name": "research_pipeline_node",
+            "error": str(exc),
+            "validation_errors": getattr(exc, "errors", str(exc)),
+            "prompt": (getattr(exc, "audit", {}) or {}).get("raw_prompt"),
+            "response": (getattr(exc, "audit", {}) or {}).get("raw_response"),
+        }
+        
+    if "agent_runs" not in state:
+        state["agent_runs"] = []
+    state["agent_runs"].append(run_entry)
+    if run_entry.get("error"):
+        return {**state, "status": "failed", "error_message": run_entry["error"]}
+
+    record_workflow_step(workflow, "research_pipeline_node", "worker", "completed", state, {"task_id": str(task.id)})
+    return {**state, "current_node": "research_pipeline_node"}
+
 def executive_reviewer_node(state: StrategyWorkflowState) -> StrategyWorkflowState:
     state["visited_nodes"].append("executive_reviewer_node")
     workflow = WorkflowRun.objects.get(id=state["workflow_run_id"])
@@ -413,9 +555,19 @@ def executive_reviewer_node(state: StrategyWorkflowState) -> StrategyWorkflowSta
         task.telemetry = {**(task.telemetry or {}), "agent_runs": [*((task.telemetry or {}).get("agent_runs", [])), run_entry]}
         
         if result.data.recommendation == "revise":
-            task.status = "blocked"
             task.governance = {**(task.governance or {}), "revision_required": True}
-            next_step = "complete_workflow" # Or pause? Based on tests, we can just say complete_workflow to halt it from evaluation
+            
+            try:
+                doc = ResearchDocument.objects.get(task=task)
+                revisions_text = "\n".join([f"- {r}" for r in result.data.required_revisions])
+                notes = f"{result.data.overall_assessment}\n\nRequired Revisions:\n{revisions_text}"
+                doc.markdown += f"\n\n## Review Notes\n{notes}\n"
+                doc.save()
+                task.status = "blocked"
+                next_step = "complete_workflow"
+            except ResearchDocument.DoesNotExist:
+                task.status = "blocked"
+                next_step = "complete_workflow"
         else:
             next_step = "evaluation_node"
             
@@ -530,6 +682,7 @@ def update_task_ledger_node(state: StrategyWorkflowState) -> StrategyWorkflowSta
     task.save()
     generate_markdown_document(task)
     create_execution_actions_from_task(task)
+    task.save()
 
     
     state["pending_task_ids"].remove(task_id)
@@ -754,6 +907,7 @@ def run_strategy_graph(workflow_run, loop_limit=100):
     builder.add_node("agent_router", agent_router_node)
     builder.add_node("product_manager_node", product_manager_node)
     builder.add_node("strategy_manager_node", strategy_manager_node)
+    builder.add_node("research_pipeline_node", research_pipeline_node)
     builder.add_node("email_draft_node", email_draft_node)
     builder.add_node("housekeeping_node", housekeeping_node)
     builder.add_node("executive_reviewer_node", executive_reviewer_node)
@@ -796,12 +950,14 @@ def run_strategy_graph(workflow_run, loop_limit=100):
         "failed": END,
         "product_manager_node": "product_manager_node",
         "strategy_manager_node": "strategy_manager_node",
+        "research_pipeline_node": "research_pipeline_node",
         "email_draft_node": "email_draft_node",
         "housekeeping_node": "housekeeping_node"
     })
     
     builder.add_edge("product_manager_node", "executive_reviewer_node")
     builder.add_edge("strategy_manager_node", "executive_reviewer_node")
+    builder.add_edge("research_pipeline_node", "executive_reviewer_node")
     builder.add_edge("housekeeping_node", "executive_reviewer_node")
     
     def route_after_email_draft(state):
@@ -915,10 +1071,21 @@ def run_agent_for_single_task(task: TaskLedgerEntry, user=None) -> None:
     task.save()
     
     try:
+        # Pre-execution deep research for product and strategy tasks
+        if task.task_type not in ["email_draft", "housekeeping"]:
+            state = research_pipeline_node(state)
+            if state.get("status") == "failed":
+                task.status = "failed"
+                task.save()
+                return
+
         # Route to specialist agent based on task_type
         if task.task_type in ["metrics_definition", "implementation_plan", "roadmap", "execution_tracking"]:
             state = product_manager_node(state)
-        elif task.task_type in ["competitive_research", "risk_analysis", "product_strategy"]:
+        elif task.task_type == "competitive_research":
+            # Already handled by research_pipeline_node above
+            pass
+        elif task.task_type in ["risk_analysis", "product_strategy"]:
             state = strategy_manager_node(state)
         elif task.task_type == "email_draft":
             state = email_draft_node(state)
@@ -939,6 +1106,7 @@ def run_agent_for_single_task(task: TaskLedgerEntry, user=None) -> None:
         if task.task_type != "email_draft":
             state = executive_reviewer_node(state)
             if state.get("status") == "failed":
+                print("EXECUTIVE REVIEWER FAILED:", state.get("error_message"))
                 task.status = "failed"
                 task.save()
                 return
@@ -971,6 +1139,7 @@ def run_agent_for_single_task(task: TaskLedgerEntry, user=None) -> None:
         task.save()
         generate_markdown_document(task)
         create_execution_actions_from_task(task)
+        task.save()
 
         
     except Exception as e:
@@ -998,7 +1167,9 @@ def generate_markdown_document(task: TaskLedgerEntry) -> None:
     
     md_content = []
     
-    if "verified_documents" in agent_output:
+    if agent_output.get("document_generated") and "generated_document_markdown" in task.outputs:
+        pass # Document is already fully generated by a specialized node
+    elif "verified_documents" in agent_output:
         md_content.append(f"# Housekeeping Report: {title}\n")
         
         md_content.append("## Workspace Documents Audit Summary")
@@ -1072,6 +1243,28 @@ def generate_markdown_document(task: TaskLedgerEntry) -> None:
                 md_content.append(str(insights))
             md_content.append("")
 
+        if "detailed_feature_analysis" in agent_output and agent_output["detailed_feature_analysis"]:
+            md_content.append("## Detailed Feature Analysis")
+            analysis = agent_output["detailed_feature_analysis"]
+            if isinstance(analysis, list) and len(analysis) > 0 and isinstance(analysis[0], dict):
+                md_content.append("| Feature | Benefits & Impact | Complexity | Data Requirements | Phase Timeline | Use Cases |")
+                md_content.append("|---|---|---|---|---|---|")
+                for feature in analysis:
+                    name = str(feature.get("feature_name", "")).replace("\n", " ")
+                    benefits = str(feature.get("benefits_and_impact", "")).replace("\n", " ")
+                    comp = str(feature.get("implementation_complexity", "")).replace("\n", " ")
+                    data = str(feature.get("data_requirements", "")).replace("\n", " ")
+                    timeline = str(feature.get("phase_timeline", "")).replace("\n", " ")
+                    use_cases = str(feature.get("industry_use_cases", "")).replace("\n", " ")
+                    md_content.append(f"| **{name}** | {benefits} | {comp} | {data} | {timeline} | {use_cases} |")
+            else:
+                if isinstance(analysis, list):
+                    for a in analysis:
+                        md_content.append(f"- {a}")
+                else:
+                    md_content.append(str(analysis))
+            md_content.append("")
+
         if "product_recommendation" in agent_output:
             md_content.append("## Product Recommendation")
             md_content.append(f"{agent_output['product_recommendation']}\n")
@@ -1090,30 +1283,40 @@ def generate_markdown_document(task: TaskLedgerEntry) -> None:
                 md_content.append(str(options))
             md_content.append("")
 
-        md_content.append("## 30/60/90 Day Execution Plan")
-        next_actions = agent_output.get("next_actions", [])
-        if isinstance(next_actions, list) and len(next_actions) >= 3:
-            md_content.append("### 30-Day Plan (Phase 1: Setup & Alignment)")
-            md_content.append(f"- Focus action: {next_actions[0]}")
-            md_content.append("- Establish search catalog sync and index configuration.")
-            md_content.append("- Align technical stakeholders on success indicators.\n")
-            
-            md_content.append("### 60-Day Plan (Phase 2: Integration & Beta Launch)")
-            md_content.append(f"- Focus action: {next_actions[1]}")
-            md_content.append("- Implement search layout widgets and facet filters in development components.")
-            md_content.append("- Launch internal beta to evaluate search responsiveness and accuracy.\n")
-            
-            md_content.append("### 90-Day Plan (Phase 3: Launch & Scale)")
-            md_content.append(f"- Focus action: {next_actions[2]}")
-            md_content.append("- Go live with production indexes and scale traffic.")
-            md_content.append("- Monitor search click-through analytics and optimize relevancy filters.\n")
+        execution_timeline = agent_output.get("execution_timeline")
+        if execution_timeline and isinstance(execution_timeline, list) and len(execution_timeline) > 0 and isinstance(execution_timeline[0], dict):
+            md_content.append("## Detailed Execution Plan")
+            for phase in execution_timeline:
+                md_content.append(f"### {phase.get('phase_name', 'Phase')}")
+                if phase.get("focus_areas"):
+                    md_content.append(f"**Focus Areas**: {phase.get('focus_areas')}\n")
+                if phase.get("features_to_enable"):
+                    md_content.append("**Features to Enable:**")
+                    for feat in phase.get("features_to_enable", []):
+                        md_content.append(f"- {feat}")
+                    md_content.append("")
+                if phase.get("tasks"):
+                    md_content.append("**Key Tasks:**")
+                    for task_item in phase.get("tasks", []):
+                        md_content.append(f"- {task_item}")
+                    md_content.append("")
         else:
-            md_content.append("### 30-Day Plan (Phase 1: Setup & Design)")
-            md_content.append("- Design core schemas and configure sandbox credentials.")
-            md_content.append("### 60-Day Plan (Phase 2: Implementation & Validation)")
-            md_content.append("- Integrate layout widgets and perform unit tests on queries.")
-            md_content.append("### 90-Day Plan (Phase 3: Launch & Scale)")
-            md_content.append("- Deploy search features to production and analyze Q2 conversion metrics.\n")
+            md_content.append("## 30/60/90 Day Execution Plan")
+            next_actions = agent_output.get("next_actions", [])
+            if isinstance(next_actions, list) and len(next_actions) >= 3:
+                md_content.append("### 30-Day Plan")
+                md_content.append(f"- {next_actions[0]}\n")
+                md_content.append("### 60-Day Plan")
+                md_content.append(f"- {next_actions[1]}\n")
+                md_content.append("### 90-Day Plan")
+                for action in next_actions[2:]:
+                    md_content.append(f"- {action}")
+                md_content.append("")
+            elif isinstance(next_actions, list) and next_actions:
+                md_content.append("### Execution Plan")
+                for action in next_actions:
+                    md_content.append(f"- {action}")
+                md_content.append("")
 
         if "success_metrics" in agent_output:
             md_content.append("## Success Metrics")
@@ -1159,7 +1362,10 @@ def generate_markdown_document(task: TaskLedgerEntry) -> None:
                 md_content.append(str(refs))
             md_content.append("")
 
-    markdown_str = "\n".join(md_content)
+    if agent_output.get("document_generated") and "generated_document_markdown" in task.outputs:
+        markdown_str = task.outputs["generated_document_markdown"]
+    else:
+        markdown_str = "\n".join(md_content)
     
     file_exists = os.path.exists(file_path)
     has_existing = (task.outputs and "generated_document_markdown" in task.outputs) or file_exists

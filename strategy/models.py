@@ -10,11 +10,17 @@ class Topic(models.Model):
         ("deleted", "Deleted"),
     ]
 
+    WORKSPACE_TYPES = [
+        ("strategy", "Strategy Workspace"),
+        ("custom_agent_chain", "Custom Agent Chain Workspace"),
+    ]
+
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     strategic_context = models.TextField(blank=True)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     status = models.CharField(max_length=32, choices=STATUS_CHOICES, default="draft")
+    workspace_type = models.CharField(max_length=50, choices=WORKSPACE_TYPES, default="strategy")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -58,6 +64,7 @@ class TaskLedgerEntry(models.Model):
     STATUS_CHOICES = [
         ("proposed", "Proposed"),
         ("approved", "Approved"),
+        ("pending_approval", "Pending Approval"),
         ("in_progress", "In Progress"),
         ("completed", "Completed"),
         ("rejected", "Rejected"),
@@ -114,6 +121,28 @@ class TaskLedgerEntry(models.Model):
                 raise ValidationError("Cannot move to in_progress without approval")
                 
         super().clean()
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+        if is_new and self.task_type == "competitive_research":
+            if not hasattr(self, "researchbrief"):
+                desc = (self.inputs or {}).get("description", "")
+                objective = desc if desc else self.title
+                questions = [
+                    f"What are the core industry standards for {self.title}?",
+                    f"How do leading platforms solve {self.title}?",
+                    f"What key metrics define success for {self.title}?",
+                    f"What are the major risks and pitfalls in {self.title}?",
+                    f"What technologies or integrations are recommended for {self.title}?"
+                ]
+                ResearchBrief.objects.create(
+                    topic=self.topic,
+                    task=self,
+                    objective=objective,
+                    research_questions=questions,
+                    status="draft"
+                )
 
 class MemoryRecord(models.Model):
     MEMORY_TYPE_CHOICES = [
@@ -176,6 +205,8 @@ class EvaluationScorecard(models.Model):
     style_alignment = models.FloatField(null=True, blank=True)
     local_context = models.FloatField(null=True, blank=True)
     novelty = models.FloatField(null=True, blank=True)
+    user_score = models.FloatField(null=True, blank=True)
+    hallucination_detected = models.BooleanField(default=False)
     overall_score = models.FloatField(null=True, blank=True)
     reviewer_notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -185,7 +216,7 @@ class EvaluationScorecard(models.Model):
         scores = [
             self.relevance, self.quality, self.evidence_strength, 
             self.actionability, self.executive_readiness, self.style_alignment, 
-            self.local_context, self.novelty
+            self.local_context, self.novelty, self.user_score
         ]
         valid_scores = [s for s in scores if s is not None]
         if valid_scores:
@@ -437,4 +468,364 @@ class VoiceTranscriptRecord(models.Model):
     language = models.CharField(max_length=32, default="en-US")
     provider = models.CharField(max_length=64, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    telemetry = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+class AgentDefinition(models.Model):
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name="agent_definitions")
+    name = models.CharField(max_length=255)
+    role = models.CharField(max_length=255, blank=True)
+    description = models.TextField(blank=True)
+    system_prompt = models.TextField()
+    instructions = models.TextField(blank=True)
+    input_schema = models.JSONField(default=dict, blank=True)
+    output_schema = models.JSONField(default=dict)
+    memory_scope = models.CharField(
+        max_length=50,
+        choices=[
+            ("agent_only", "Agent Only"),
+            ("workspace_shared", "Workspace Shared"),
+            ("none", "No Memory"),
+        ],
+        default="agent_only",
+    )
+    rag_collection_id = models.CharField(max_length=255, blank=True)
+    model_name = models.CharField(max_length=100, default="default")
+    temperature = models.FloatField(default=0.2)
+    position_x = models.FloatField(default=0)
+    position_y = models.FloatField(default=0)
+    is_entrypoint = models.BooleanField(default=False)
+    is_terminal = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class AgentEdge(models.Model):
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name="agent_edges")
+    source_agent = models.ForeignKey(
+        AgentDefinition,
+        on_delete=models.CASCADE,
+        related_name="outgoing_edges",
+    )
+    target_agent = models.ForeignKey(
+        AgentDefinition,
+        on_delete=models.CASCADE,
+        related_name="incoming_edges",
+    )
+    label = models.CharField(max_length=255, blank=True)
+    data_mapping = models.JSONField(default=dict, blank=True)
+    condition = models.JSONField(default=dict, blank=True)
+    requires_approval = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class AgentMemoryCollection(models.Model):
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE)
+    agent = models.ForeignKey(AgentDefinition, on_delete=models.CASCADE)
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    collection_key = models.CharField(max_length=255, unique=True)
+    visibility = models.CharField(
+        max_length=50,
+        choices=[
+            ("private_to_agent", "Private to Agent"),
+            ("workspace_shared", "Workspace Shared"),
+        ],
+        default="private_to_agent",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+from pgvector.django import VectorField
+
+class AgentMemoryChunk(models.Model):
+    collection = models.ForeignKey(
+        AgentMemoryCollection,
+        on_delete=models.CASCADE,
+        related_name="chunks",
+    )
+    source_title = models.CharField(max_length=500)
+    source_uri = models.TextField(blank=True)
+    chunk_text = models.TextField()
+    embedding = VectorField(dimensions=1536)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class ChainExecutionVersion(models.Model):
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name="chain_versions")
+    version_number = models.PositiveIntegerField()
+    status = models.CharField(
+        max_length=50,
+        choices=[
+            ("draft", "Draft"),
+            ("running", "Running"),
+            ("paused", "Paused"),
+            ("completed", "Completed"),
+            ("failed", "Failed"),
+            ("cancelled", "Cancelled"),
+        ],
+        default="draft",
+    )
+    trigger_input = models.JSONField(default=dict)
+    graph_snapshot = models.JSONField(default=dict)
+    started_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ("topic", "version_number")
+
+class AgentRunTrace(models.Model):
+    execution_version = models.ForeignKey(
+        ChainExecutionVersion,
+        on_delete=models.CASCADE,
+        related_name="agent_traces",
+    )
+    agent = models.ForeignKey(AgentDefinition, on_delete=models.PROTECT)
+    run_order = models.PositiveIntegerField()
+    status = models.CharField(
+        max_length=50,
+        choices=[
+            ("pending", "Pending"),
+            ("running", "Running"),
+            ("completed", "Completed"),
+            ("failed", "Failed"),
+            ("skipped", "Skipped"),
+            ("awaiting_approval", "Awaiting Approval"),
+        ],
+        default="pending",
+    )
+    input_payload = models.JSONField(default=dict)
+    mapped_input_payload = models.JSONField(default=dict)
+    memory_context_used = models.JSONField(default=list)
+    prompt_snapshot = models.TextField(blank=True)
+    output_payload = models.JSONField(default=dict)
+    validation_result = models.JSONField(default=dict)
+    telemetry = models.JSONField(default=dict)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+class AgentArtifact(models.Model):
+    execution_version = models.ForeignKey(ChainExecutionVersion, on_delete=models.CASCADE)
+    agent_trace = models.ForeignKey(AgentRunTrace, on_delete=models.CASCADE)
+    artifact_type = models.CharField(
+        max_length=100,
+        choices=[
+            ("markdown", "Markdown"),
+            ("html", "HTML"),
+            ("json", "JSON"),
+            ("document", "Document"),
+            ("table", "Table"),
+            ("image_reference", "Image Reference"),
+        ],
+    )
+    title = models.CharField(max_length=500)
+    content = models.TextField(blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class ResearchBrief(models.Model):
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE)
+    task = models.OneToOneField(TaskLedgerEntry, on_delete=models.CASCADE)
+    objective = models.TextField()
+    research_questions = models.JSONField(default=list)
+    status = models.CharField(max_length=50, default="draft")
+
+
+class SourceRecord(models.Model):
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name="source_records")
+    agent_trace = models.ForeignKey("AgentRunTrace", on_delete=models.SET_NULL, null=True, blank=True, related_name="sources")
+    title = models.CharField(max_length=500)
+    url = models.URLField(max_length=2000, blank=True)
+    publisher = models.CharField(max_length=255, blank=True)
+    source_type = models.CharField(max_length=100, default="web")
+    content_summary = models.TextField(blank=True)
+    relevance_score = models.IntegerField(default=0)
+    retrieved_at = models.DateTimeField(auto_now_add=True)
+
+class ManualSource(models.Model):
+    agent = models.ForeignKey(AgentDefinition, on_delete=models.CASCADE, related_name="manual_sources")
+    title = models.CharField(max_length=500)
+    url = models.URLField(max_length=2000, blank=True)
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.title} (Agent: {self.agent.name})"
+
+
+class EvidenceQuote(models.Model):
+    source = models.ForeignKey(SourceRecord, on_delete=models.CASCADE)
+    task = models.ForeignKey(TaskLedgerEntry, on_delete=models.CASCADE)
+    quote = models.TextField()
+    interpretation = models.TextField()
+    relevance = models.TextField()
+    confidence = models.FloatField(default=0.7)
+
+
+class ResearchFinding(models.Model):
+    task = models.ForeignKey(TaskLedgerEntry, on_delete=models.CASCADE)
+    finding = models.TextField()
+    evidence = models.ManyToManyField(EvidenceQuote)
+    implication = models.TextField()
+    confidence = models.FloatField(default=0.7)
+
+
+class ResearchDocument(models.Model):
+    task = models.OneToOneField(TaskLedgerEntry, on_delete=models.CASCADE)
+    title = models.CharField(max_length=500)
+    markdown = models.TextField()
+    html = models.TextField(blank=True)
+    doc_type = models.CharField(max_length=100, default="research_report")
+    status = models.CharField(max_length=50, default="draft")
+
+# ----------------------------------------------------------------------------
+# Prompt Library Subsystem
+# ----------------------------------------------------------------------------
+
+class PromptTemplate(models.Model):
+    name = models.CharField(max_length=255)
+    category = models.CharField(
+        max_length=100,
+        choices=[
+            ("safety", "Safety"),
+            ("research", "Research"),
+            ("reasoning", "Reasoning"),
+            ("writing", "Writing"),
+            ("evaluation", "Evaluation"),
+            ("memory", "Memory"),
+            ("custom", "Custom"),
+        ],
+    )
+    description = models.TextField(blank=True)
+    prompt_body = models.TextField()
+    version = models.IntegerField(default=1)
+    is_system_prompt = models.BooleanField(default=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class PromptTemplateVersion(models.Model):
+    prompt_template = models.ForeignKey(PromptTemplate, on_delete=models.CASCADE)
+    version_number = models.IntegerField()
+    prompt_body = models.TextField()
+    changelog = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AgentPromptAssignment(models.Model):
+    agent = models.ForeignKey(
+        AgentDefinition,
+        on_delete=models.CASCADE,
+        related_name="prompt_assignments",
+    )
+    prompt_template = models.ForeignKey(PromptTemplate, on_delete=models.CASCADE)
+    sort_order = models.IntegerField(default=0)
+    enabled = models.BooleanField(default=True)
+    required = models.BooleanField(default=True)
+
+
+class PromptExecutionTrace(models.Model):
+    agent_trace = models.ForeignKey(AgentRunTrace, on_delete=models.CASCADE)
+    prompt_template = models.ForeignKey(PromptTemplate, on_delete=models.PROTECT)
+    version_number = models.IntegerField()
+    prompt_snapshot = models.TextField()
+    execution_order = models.IntegerField()
+
+    def __str__(self):
+        return f"Trace for {self.agent_trace.agent.name} - Template {self.prompt_template.name} v{self.version_number}"
+
+class PromptVersionMetrics(models.Model):
+    prompt_version = models.OneToOneField(
+        PromptTemplateVersion,
+        on_delete=models.CASCADE,
+        related_name="metrics"
+    )
+    tasks_used_count = models.PositiveIntegerField(default=0)
+    acceptance_rate = models.FloatField(default=0.0)
+    average_executive_score = models.FloatField(default=0.0)
+    average_user_score = models.FloatField(default=0.0)
+    failure_rate = models.FloatField(default=0.0)
+    hallucination_rate = models.FloatField(default=0.0)
+    last_calculated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Metrics for {self.prompt_version.prompt_template.name} v{self.prompt_version.version_number}"
+
+class PromptPack(models.Model):
+    key = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255)
+    templates = models.ManyToManyField(PromptTemplate, related_name="packs")
+
+    def __str__(self):
+        return self.name
+
+class EvaluationTemplate(models.Model):
+    name = models.CharField(max_length=255)
+    category = models.CharField(
+        max_length=100,
+        choices=[
+            ("quality", "Quality"),
+            ("evidence", "Evidence"),
+            ("strategy", "Strategy"),
+            ("product", "Product"),
+            ("executive", "Executive"),
+            ("safety", "Safety"),
+            ("writing", "Writing"),
+            ("custom", "Custom"),
+        ],
+    )
+    description = models.TextField()
+    evaluation_prompt = models.TextField()
+    version = models.IntegerField(default=1)
+    scoring_schema = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} (v{self.version})"
+
+class EvaluationPack(models.Model):
+    key = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255)
+    templates = models.ManyToManyField(EvaluationTemplate, related_name="packs")
+
+    def __str__(self):
+        return self.name
+
+class EvaluationAssignment(models.Model):
+    agent = models.ForeignKey(AgentDefinition, on_delete=models.CASCADE)
+    evaluation_template = models.ForeignKey(EvaluationTemplate, on_delete=models.CASCADE)
+    enabled = models.BooleanField(default=True)
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ['sort_order']
+
+    def __str__(self):
+        return f"{self.agent.name} -> {self.evaluation_template.name}"
+
+class EvaluationRun(models.Model):
+    agent_trace = models.ForeignKey(AgentRunTrace, on_delete=models.CASCADE)
+    evaluation_template = models.ForeignKey(EvaluationTemplate, on_delete=models.PROTECT)
+    result = models.JSONField()
+    overall_score = models.FloatField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Run {self.id} - Score: {self.overall_score}"
+
+class AgentEvaluationHistory(models.Model):
+    agent = models.ForeignKey(AgentDefinition, on_delete=models.CASCADE)
+    execution_version = models.ForeignKey(ChainExecutionVersion, on_delete=models.CASCADE)
+    overall_score = models.FloatField()
+    quality_score = models.FloatField(default=0.0)
+    evidence_score = models.FloatField(default=0.0)
+    executive_score = models.FloatField(default=0.0)
+    hallucination_score = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"History for {self.agent.name} (Score: {self.overall_score})"

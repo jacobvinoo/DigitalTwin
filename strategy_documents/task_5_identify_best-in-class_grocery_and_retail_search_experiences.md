@@ -20,20 +20,14 @@ We recommend integrating Algolia (Option 2) because it provides state-of-the-art
 - Option 3: Leverage basic SQL database-level full-text search as a low-cost, low-effort starting point
 
 ## 30/60/90 Day Execution Plan
-### 30-Day Plan (Phase 1: Setup & Alignment)
-- Focus action: Set up a free trial account on Algolia and upload a sample product catalog
-- Establish search catalog sync and index configuration.
-- Align technical stakeholders on success indicators.
+### 30-Day Plan
+- Set up a free trial account on Algolia and upload a sample product catalog
 
-### 60-Day Plan (Phase 2: Integration & Beta Launch)
-- Focus action: Develop a prototype React search interface using Algolia InstantSearch
-- Implement search layout widgets and facet filters in development components.
-- Launch internal beta to evaluate search responsiveness and accuracy.
+### 60-Day Plan
+- Develop a prototype React search interface using Algolia InstantSearch
 
-### 90-Day Plan (Phase 3: Launch & Scale)
-- Focus action: Draft the final technical integration plan and cost estimation worksheet
-- Go live with production indexes and scale traffic.
-- Monitor search click-through analytics and optimize relevancy filters.
+### 90-Day Plan
+- Draft the final technical integration plan and cost estimation worksheet
 
 ## Risk Assessment & Mitigations
 - API dependency risk: Algolia downtime could disable the search feature entirely

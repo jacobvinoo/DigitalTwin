@@ -30,7 +30,7 @@ describe('TopicCreateWizard', () => {
     // 3. User sees preview workstreams
     expect(screen.getByText(/Competitive Analysis/i)).toBeInTheDocument();
     expect(screen.getByText(/Market Metrics/i)).toBeInTheDocument();
-    expect(screen.getByText(/Algolia Implementation Plan/i)).toBeInTheDocument();
+    expect(screen.getByText(/Implementation Plan/i)).toBeInTheDocument();
     expect(screen.getByText(/Risk Analysis/i)).toBeInTheDocument();
     expect(screen.getByText(/Product Strategy/i)).toBeInTheDocument();
     expect(screen.getByText(/Roadmap/i)).toBeInTheDocument();

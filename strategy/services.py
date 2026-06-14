@@ -1,68 +1,70 @@
 from strategy.models import Topic, Objective, Workstream, TaskLedgerEntry
+from django.conf import settings
 
-SEARCH_TOPIC_TASKS = [
-    {
-        "title": "Create Algolia implementation plan",
-        "task_type": "implementation_plan",
-        "workstream_type": "implementation_plan",
-        "risk_level": "medium",
-        "approval_required": True,
-    },
-    {
-        "title": "Identify best-in-class grocery and retail search experiences",
-        "task_type": "competitive_research",
-        "workstream_type": "competitive_analysis",
-        "risk_level": "low",
-        "approval_required": False,
-    },
-    {
-        "title": "Define search relevance and conversion metrics",
-        "task_type": "metrics_definition",
-        "workstream_type": "market_metrics",
-        "risk_level": "low",
-        "approval_required": False,
-    },
-    {
-        "title": "Identify product, technical, adoption, and data risks",
-        "task_type": "risk_analysis",
-        "workstream_type": "risk_analysis",
-        "risk_level": "high",
-        "approval_required": True,
-    },
-    {
-        "title": "Analyse current supermarket search experience",
-        "task_type": "competitive_research",
-        "workstream_type": "competitive_analysis",
-        "risk_level": "low",
-        "approval_required": False,
-    },
-    {
-        "title": "Create product strategy narrative",
-        "task_type": "product_strategy",
-        "workstream_type": "product_strategy",
-        "risk_level": "medium",
-        "approval_required": True,
-    },
-    {
-        "title": "Create 30/60/90 day roadmap",
-        "task_type": "roadmap",
-        "workstream_type": "roadmap",
-        "risk_level": "medium",
-        "approval_required": True,
-    },
-    {
-        "title": "Create execution tracking dashboard structure",
-        "task_type": "execution_tracking",
-        "workstream_type": "execution_tracking",
-        "risk_level": "low",
-        "approval_required": False,
-    },
-]
+def get_default_tasks():
+    return [
+        {
+            "title": "Create implementation plan",
+            "task_type": "implementation_plan",
+            "workstream_type": "implementation_plan",
+            "risk_level": "medium",
+            "approval_required": True,
+        },
+        {
+            "title": "Identify best-in-class market experiences",
+            "task_type": "competitive_research",
+            "workstream_type": "competitive_analysis",
+            "risk_level": "low",
+            "approval_required": False,
+        },
+        {
+            "title": "Define strategic success metrics",
+            "task_type": "metrics_definition",
+            "workstream_type": "market_metrics",
+            "risk_level": "low",
+            "approval_required": False,
+        },
+        {
+            "title": "Identify product, technical, adoption, and data risks",
+            "task_type": "risk_analysis",
+            "workstream_type": "risk_analysis",
+            "risk_level": "high",
+            "approval_required": True,
+        },
+        {
+            "title": "Analyse current state and competitor landscape",
+            "task_type": "competitive_research",
+            "workstream_type": "competitive_analysis",
+            "risk_level": "low",
+            "approval_required": False,
+        },
+        {
+            "title": "Create product strategy narrative",
+            "task_type": "product_strategy",
+            "workstream_type": "product_strategy",
+            "risk_level": "medium",
+            "approval_required": True,
+        },
+        {
+            "title": "Create 30/60/90 day roadmap",
+            "task_type": "roadmap",
+            "workstream_type": "roadmap",
+            "risk_level": "medium",
+            "approval_required": True,
+        },
+        {
+            "title": "Create execution tracking dashboard structure",
+            "task_type": "execution_tracking",
+            "workstream_type": "execution_tracking",
+            "risk_level": "low",
+            "approval_required": False,
+        },
+    ]
 
 def create_strategy_topic(
     user,
-    title="Search for Supermarket",
-    objective_text="Improve supermarket search relevance, customer discovery, and search-led conversion using a structured product and strategy workflow.",
+    title="New Strategic Initiative",
+    objective_text="Develop a comprehensive strategy and implementation plan for the new initiative using a structured product and strategy workflow.",
     strategic_context=""
 ):
     topic = Topic.objects.create(
@@ -84,7 +86,7 @@ def create_strategy_topic(
     workstream_defs = [
         ("Competitive Analysis", "competitive_analysis"),
         ("Market Metrics", "market_metrics"),
-        ("Algolia Implementation Plan", "implementation_plan"),
+        ("Implementation Plan", "implementation_plan"),
         ("Risk Analysis", "risk_analysis"),
         ("Product Strategy", "product_strategy"),
         ("Roadmap", "roadmap"),
@@ -101,7 +103,35 @@ def create_strategy_topic(
         )
         workstream_mapping[ws_type] = ws
 
-    for task_def in SEARCH_TOPIC_TASKS:
+    # Dynamically generate tasks via LLM based on the topic details
+    import os
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        tasks_to_create = get_default_tasks()
+    else:
+        from strategy.agents.client import LLMClient
+        from strategy.agents.schemas import TaskGenerationOutput
+        
+        prompt = f"""
+        You are an expert strategic planner. The user wants to create a new strategy initiative.
+        Title: {title}
+        Objective: {objective_text}
+        Context: {strategic_context}
+        
+        Create a list of 8 specific tasks to accomplish this. They must align with the topic.
+        """
+        try:
+            result = LLMClient().execute(
+                prompt=prompt,
+                prompt_version="v1.0.0",
+                schema_class=TaskGenerationOutput,
+                model=getattr(settings, "STRATEGYPAD_AGENT_MODEL", "gpt-4o")
+            )
+            tasks_to_create = [t.model_dump() for t in result.data.tasks]
+        except Exception as e:
+            print(f"Fallback to default tasks. LLM task generation failed: {e}")
+            tasks_to_create = get_default_tasks()
+
+    for task_def in tasks_to_create:
         risk_level = task_def["risk_level"]
         approval_required = task_def["approval_required"]
         
@@ -442,17 +472,6 @@ class ConversationCommandRouter:
     def _handle_get_pending_approvals(self, session, text, task_id, action_id):
         from strategy.models import ActionRequest
         actions = ActionRequest.objects.filter(topic=session.topic, status="awaiting_approval")
-        if not actions.exists():
-            ActionRequest.objects.create(
-                topic=session.topic,
-                action_type="email_draft",
-                status="awaiting_approval",
-                title="Draft Action",
-                instruction="Draft email to search team",
-                risk_level="medium",
-                approval_required=True
-            )
-            actions = ActionRequest.objects.filter(topic=session.topic, status="awaiting_approval")
             
         return self._respond(
             session,

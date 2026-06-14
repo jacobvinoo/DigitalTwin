@@ -102,14 +102,13 @@ export function WorkflowTaskDetailsCard({ task }: { task: any }) {
                 <span className="font-semibold text-indigo-900 block">Generated Document:</span>
                 <span className="text-indigo-700 font-mono text-[10px] block truncate">{task.outputs.generated_document_name}</span>
               </div>
-              <a
-                href={`file://${task.outputs.generated_document_path}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-2 py-1 rounded transition text-center shadow-xs whitespace-nowrap"
+              <button
+                onClick={() => navigator.clipboard.writeText(task.outputs.generated_document_path)}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-2 py-1 rounded transition text-center shadow-xs whitespace-nowrap cursor-pointer"
+                title="Copy file path to clipboard"
               >
-                Open File
-              </a>
+                Copy Path
+              </button>
             </div>
           )}
 

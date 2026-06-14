@@ -8,6 +8,7 @@ interface Project {
   description: string;
   strategic_context: string;
   status: string;
+  workspace_type: string;
   created_at: string;
   updated_at: string;
   tasks_count: number;
@@ -141,15 +142,42 @@ export default function ProjectDashboard() {
               Access your configured strategic workspaces, track action execution progress, and review agent decisions.
             </p>
           </div>
-          <div>
+          <div className="flex gap-3 mt-6 md:mt-0">
             <button
               onClick={() => navigate('/topics/new')}
-              className="inline-flex items-center justify-center rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white shadow-md hover:bg-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 focus:ring-offset-slate-900 transition-all active:scale-95"
+              className="inline-flex items-center justify-center rounded-xl bg-slate-800 px-5 py-3 text-sm font-semibold text-white shadow-md hover:bg-slate-700 border border-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 focus:ring-offset-slate-900 transition-all active:scale-95"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
               </svg>
-              Create Strategy Workspace
+              Create Strategy
+            </button>
+            <button
+              onClick={() => navigate('/agent-chain/new')}
+              className="inline-flex items-center justify-center rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white shadow-md hover:bg-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 focus:ring-offset-slate-900 transition-all active:scale-95"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+              </svg>
+              Create Agent Chain
+            </button>
+            <button
+              onClick={() => navigate('/prompts')}
+              className="inline-flex items-center justify-center rounded-xl bg-purple-500 px-5 py-3 text-sm font-semibold text-white shadow-md hover:bg-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 focus:ring-offset-slate-900 transition-all active:scale-95"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+              Manage Prompts
+            </button>
+            <button
+              onClick={() => navigate('/evaluations')}
+              className="inline-flex items-center justify-center rounded-xl bg-amber-500 px-5 py-3 text-sm font-semibold text-white shadow-md hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-2 focus:ring-offset-slate-900 transition-all active:scale-95"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Manage Evaluations
             </button>
           </div>
         </div>
@@ -371,10 +399,16 @@ export default function ProjectDashboard() {
                       </button>
 
                       <button
-                        onClick={() => navigate(`/topics/${project.id}/command-centre`)}
+                        onClick={() => {
+                          if (project.workspace_type === 'custom_agent_chain') {
+                            navigate(`/topics/${project.id}/agent-chain`);
+                          } else {
+                            navigate(`/topics/${project.id}/command-centre`);
+                          }
+                        }}
                         className="inline-flex items-center justify-center text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors group/btn"
                       >
-                        Command Centre
+                        {project.workspace_type === 'custom_agent_chain' ? 'Agent Workspace' : 'Command Centre'}
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 ml-1 transform group-hover/btn:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
