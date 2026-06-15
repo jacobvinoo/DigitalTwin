@@ -107,13 +107,9 @@ def run_post_agent_evaluation(agent_trace):
     agent_trace.save(update_fields=['validation_result'])
     
     # Calculate aggregates
+    from django.conf import settings
     # Weights for specific evaluation categories
-    weights = {
-        "quality": 0.25,
-        "evidence": 0.30,
-        "executive": 0.20,
-        "hallucination": 0.25
-    }
+    weights = getattr(settings, 'EVALUATION_CATEGORY_WEIGHTS', {})
     
     total_weight = 0
     weighted_sum = 0

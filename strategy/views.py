@@ -920,8 +920,13 @@ from .serializers import (
 )
 
 class PromptTemplateViewSet(viewsets.ModelViewSet):
-    queryset = PromptTemplate.objects.all().order_by('-id')
     serializer_class = PromptTemplateSerializer
+    
+    def get_queryset(self):
+        from django.db.models import Q
+        return PromptTemplate.objects.filter(
+            Q(created_by__isnull=True) | Q(created_by=self.request.user)
+        ).order_by('-id')
     
     def perform_create(self, serializer):
         template = serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None, version=1)

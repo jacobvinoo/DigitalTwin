@@ -125,3 +125,11 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PERMISSION_CLASSES": [],
 }
+
+# Configurable weights for agent evaluation loop scoring
+EVALUATION_CATEGORY_WEIGHTS = {
+    "quality": 0.25,
+    "evidence": 0.30,
+    "executive": 0.20,
+    "hallucination": 0.25
+}
