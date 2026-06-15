@@ -22,12 +22,20 @@ const AgentChainWorkspace = ({ topicId }) => {
   const [viewMode, setViewMode] = useState('canvas'); // 'canvas' or 'analytics'
   const [loading, setLoading] = useState(true);
 
+  const [topic, setTopic] = useState(null);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState("");
+
   // Fetch Graph from Backend
   const loadGraph = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await api.get(`/api/topics/${topicId}/agent-graph/`);
-      const { initialNodes, initialEdges } = mapBackendToReactFlow(res.data);
+      const [topicRes, graphRes] = await Promise.all([
+        api.get(`/api/topics/${topicId}/`),
+        api.get(`/api/topics/${topicId}/agent-graph/`)
+      ]);
+      setTopic(topicRes.data);
+      const { initialNodes, initialEdges } = mapBackendToReactFlow(graphRes.data);
       setNodes(initialNodes);
       setEdges(initialEdges);
     } catch (err) {
@@ -40,6 +48,21 @@ const AgentChainWorkspace = ({ topicId }) => {
   useEffect(() => {
     loadGraph();
   }, [loadGraph]);
+
+  const handleSaveTitle = async () => {
+    if (!editedTitle.trim()) {
+      setIsEditingTitle(false);
+      return;
+    }
+    try {
+      await api.patch(`/api/topics/${topicId}/`, { title: editedTitle });
+      setTopic(prev => ({ ...prev, title: editedTitle }));
+    } catch (err) {
+      console.error("Failed to rename workspace", err);
+      alert("Failed to rename workspace");
+    }
+    setIsEditingTitle(false);
+  };
 
   const handleAddNode = async () => {
     try {
@@ -134,7 +157,25 @@ const AgentChainWorkspace = ({ topicId }) => {
           >
             <ArrowLeft size={14} /> Back to Dashboard
           </button>
-          <h2 className="text-lg font-semibold text-gray-800">Agent Chain</h2>
+          {isEditingTitle ? (
+            <input 
+              type="text" 
+              value={editedTitle} 
+              onChange={(e) => setEditedTitle(e.target.value)}
+              onBlur={handleSaveTitle}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveTitle(); if (e.key === 'Escape') setIsEditingTitle(false); }}
+              className="text-lg font-semibold text-gray-800 border-b border-gray-400 focus:outline-none focus:border-indigo-600 bg-transparent px-1 w-full"
+              autoFocus
+            />
+          ) : (
+            <h2 
+              className="text-lg font-semibold text-gray-800 cursor-pointer hover:text-indigo-600 transition-colors"
+              onClick={() => { setEditedTitle(topic?.title || 'Agent Chain'); setIsEditingTitle(true); }}
+              title="Click to rename"
+            >
+              {topic?.title || 'Agent Chain'}
+            </h2>
+          )}
           <p className="text-sm text-gray-500">Custom Workflow</p>
         </div>
         <div className="p-4 flex-1 space-y-4">
@@ -189,7 +230,7 @@ const AgentChainWorkspace = ({ topicId }) => {
           </ReactFlow>
         </div>
       ) : (
-        <WorkflowAnalytics />
+        <WorkflowAnalytics topicId={topicId} />
       )}
 
       {(selectedNode || selectedTrace) && (

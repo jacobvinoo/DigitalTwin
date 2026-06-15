@@ -829,3 +829,41 @@ class AgentEvaluationHistory(models.Model):
 
     def __str__(self):
         return f"History for {self.agent.name} (Score: {self.overall_score})"
+
+class AgentImprovementRecommendation(models.Model):
+    agent = models.ForeignKey(AgentDefinition, on_delete=models.CASCADE)
+    execution_version = models.ForeignKey(ChainExecutionVersion, on_delete=models.CASCADE)
+    agent_trace = models.ForeignKey(AgentRunTrace, on_delete=models.CASCADE)
+
+    issue_type = models.CharField(max_length=100)
+    source_evaluation = models.CharField(max_length=255)
+    problem = models.TextField()
+    recommended_change = models.TextField()
+
+    target_area = models.CharField(
+        max_length=50,
+        choices=[
+            ("prompt", "Prompt"),
+            ("memory", "Memory"),
+            ("rag_sources", "RAG Sources"),
+            ("output_schema", "Output Schema"),
+            ("tooling", "Tooling"),
+            ("workflow", "Workflow"),
+        ],
+    )
+
+    status = models.CharField(
+        max_length=50,
+        default="proposed",
+        choices=[
+            ("proposed", "Proposed"),
+            ("accepted", "Accepted"),
+            ("rejected", "Rejected"),
+            ("applied", "Applied"),
+        ],
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"[{self.status}] {self.issue_type} for {self.agent.name}"

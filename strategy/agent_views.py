@@ -3,7 +3,7 @@ from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
-from .models import Topic, AgentDefinition, AgentEdge, AgentPromptAssignment, EvaluationAssignment, AgentRunTrace, AgentArtifact, SourceRecord, ChainExecutionVersion
+from .models import Topic, AgentDefinition, AgentEdge, AgentPromptAssignment, EvaluationAssignment, AgentRunTrace, AgentArtifact, SourceRecord, ChainExecutionVersion, EvaluationRun, AgentEvaluationHistory, AgentImprovementRecommendation
 from .agent_serializers import AgentDefinitionSerializer, AgentEdgeSerializer
 from strategy.agents.client import LLMClient
 from pydantic import BaseModel, Field
@@ -23,6 +23,9 @@ class SimulatedSearchResponse(BaseModel):
 class EvaluationResultSchema(BaseModel):
     score: int = Field(description="An integer score from 1 to 10 based on the rubric.")
     feedback: str = Field(description="Detailed rationale and feedback justifying the score.")
+
+class ImprovementRecommendationSchema(BaseModel):
+    recommendation: str = Field(description="The concrete change to the agent's prompt or rules to address the feedback.")
 
 class SourceSchema(BaseModel):
     title: str = Field(description="Title of the source or document")
@@ -355,12 +358,20 @@ class AgentDefinitionViewSet(viewsets.ModelViewSet):
                             score = eval_data.score
                             feedback = eval_data.feedback
                         
-                        evaluations.append({
+                        eval_dict = {
                             "evaluator": et.name,
                             "score": score,
                             "feedback": feedback,
                             "passed": score >= 7
-                        })
+                        }
+                        evaluations.append(eval_dict)
+                        
+                        EvaluationRun.objects.create(
+                            agent_trace=run_trace,
+                            evaluation_template=et,
+                            result=eval_dict,
+                            overall_score=score
+                        )
                 except Exception as e:
                     evaluations.append({
                         "evaluator": et.name,
@@ -372,6 +383,47 @@ class AgentDefinitionViewSet(viewsets.ModelViewSet):
             # Save evaluations to the trace record
             run_trace.validation_result = evaluations
             run_trace.save()
+            
+            # Create AgentEvaluationHistory and AgentImprovementRecommendation
+            if eval_assignments:
+                avg_score = sum(e.get("score", 0) for e in evaluations) / len(evaluations)
+                
+                # Try to map score categories from evaluator names
+                quality = next((e.get("score", 0) for e in evaluations if "quality" in str(e.get("evaluator", "")).lower()), avg_score)
+                evidence = next((e.get("score", 0) for e in evaluations if "evidence" in str(e.get("evaluator", "")).lower()), avg_score)
+                executive = next((e.get("score", 0) for e in evaluations if "executive" in str(e.get("evaluator", "")).lower()), avg_score)
+                hallucination = next((e.get("score", 0) for e in evaluations if "hallucination" in str(e.get("evaluator", "")).lower()), avg_score)
+                
+                AgentEvaluationHistory.objects.create(
+                    agent=agent,
+                    execution_version=execution_version,
+                    overall_score=avg_score,
+                    quality_score=quality,
+                    evidence_score=evidence,
+                    executive_score=executive,
+                    hallucination_score=hallucination
+                )
+                
+                low_evals = [e for e in evaluations if e.get("score", 0) < 7]
+                for low in low_evals:
+                    try:
+                        imp_prompt = f"The agent {agent.name} received a low score ({low.get('score')}) for {low.get('evaluator')}. Feedback: {low.get('feedback')}. Please provide a concrete recommendation to append to the agent's system prompt to fix this issue."
+                        imp_res = llm.execute(prompt=imp_prompt, prompt_version="1.0", schema_class=ImprovementRecommendationSchema, model="gpt-4o-mini")
+                        rec_text = imp_res.data.recommendation if not isinstance(imp_res.data, dict) else imp_res.data.get("recommendation", "")
+                    except:
+                        rec_text = f"Improve system prompt to address: {low.get('feedback')}"
+                        
+                    AgentImprovementRecommendation.objects.create(
+                        agent=agent,
+                        execution_version=execution_version,
+                        agent_trace=run_trace,
+                        issue_type=low.get("evaluator", "General"),
+                        source_evaluation=str(low),
+                        problem=low.get("feedback", "No feedback"),
+                        recommended_change=rec_text,
+                        target_area="prompt",
+                        status="proposed"
+                    )
             
             # 4. Construct Output Trace
             trace = {

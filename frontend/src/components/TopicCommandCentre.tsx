@@ -37,6 +37,9 @@ export default function TopicCommandCentre({ topicId }: { topicId: string }) {
   const [activeCount, setActiveCount] = useState(0);
   const [completedCount, setCompletedCount] = useState(0);
 
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState("");
+
   useEffect(() => {
     fetch('/api/actions/')
       .then(res => res.json())
@@ -449,6 +452,30 @@ export default function TopicCommandCentre({ topicId }: { topicId: string }) {
     }
   };
 
+  const handleSaveTitle = async () => {
+    if (!editedTitle.trim()) {
+      setIsEditingTitle(false);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/topics/${topicId}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: editedTitle })
+      });
+      if (res.ok) {
+        setTopic({ ...topic, title: editedTitle });
+        showToast("Workspace renamed");
+      } else {
+        showToast("Failed to rename workspace");
+      }
+    } catch (e) {
+      console.error(e);
+      showToast("Network error renaming workspace");
+    }
+    setIsEditingTitle(false);
+  };
+
   const computeLineDiff = (oldText: string, newText: string) => {
     const oldLines = oldText ? oldText.split('\n') : [];
     const newLines = newText ? newText.split('\n') : [];
@@ -521,7 +548,25 @@ export default function TopicCommandCentre({ topicId }: { topicId: string }) {
       <header className="flex flex-col md:flex-row md:items-center justify-between bg-white p-6 rounded-2xl shadow-sm border mb-6">
         <div className="flex-1">
           <div className="flex items-center space-x-3">
-            <h1 className="text-2xl font-semibold">{topic.title}</h1>
+            {isEditingTitle ? (
+              <input 
+                type="text" 
+                value={editedTitle} 
+                onChange={(e) => setEditedTitle(e.target.value)}
+                onBlur={handleSaveTitle}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveTitle(); if (e.key === 'Escape') setIsEditingTitle(false); }}
+                className="text-2xl font-semibold border-b border-gray-400 focus:outline-none focus:border-blue-600 bg-transparent px-1 min-w-[200px]"
+                autoFocus
+              />
+            ) : (
+              <h1 
+                className="text-2xl font-semibold cursor-pointer hover:text-blue-600 transition-colors" 
+                onClick={() => { setEditedTitle(topic.title); setIsEditingTitle(true); }}
+                title="Click to rename"
+              >
+                {topic.title}
+              </h1>
+            )}
             <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">{topic.status}</span>
           </div>
           

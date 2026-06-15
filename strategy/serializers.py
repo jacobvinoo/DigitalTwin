@@ -225,3 +225,11 @@ class PromptExecutionTraceSerializer(serializers.ModelSerializer):
     class Meta:
         model = PromptExecutionTrace
         fields = "__all__"
+
+class AgentImprovementRecommendationSerializer(serializers.ModelSerializer):
+    agent_name = serializers.CharField(source='agent.name', read_only=True)
+
+    class Meta:
+        from strategy.models import AgentImprovementRecommendation
+        model = AgentImprovementRecommendation
+        fields = "__all__"

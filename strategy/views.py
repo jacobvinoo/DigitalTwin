@@ -108,6 +108,45 @@ class TopicViewSet(viewsets.ModelViewSet):
             })
         return Response(data)
 
+    @action(detail=True, methods=["get"], url_path="workflow-analytics")
+    def workflow_analytics(self, request, pk=None):
+        topic = self.get_object()
+        from strategy.models import AgentDefinition, AgentEvaluationHistory, AgentImprovementRecommendation
+        agents = AgentDefinition.objects.filter(topic=topic)
+        
+        agent_metrics = []
+        for agent in agents:
+            histories = AgentEvaluationHistory.objects.filter(agent=agent).order_by('-created_at')
+            executions = histories.count()
+            if executions > 0:
+                score = histories.first().overall_score
+                trend = 0
+                if executions > 1:
+                    trend = round(score - histories[1].overall_score, 1)
+            else:
+                score = 0
+                trend = 0
+            
+            agent_metrics.append({
+                "id": agent.id,
+                "agent": agent.name,
+                "score": round(score, 1),
+                "trend": trend,
+                "acceptance": 100, # mock
+                "revisions": 0, # mock
+                "executions": executions
+            })
+            
+        recommendations = AgentImprovementRecommendation.objects.filter(
+            agent__in=agents, 
+            status="proposed"
+        ).values("id", "agent__name", "issue_type", "problem", "recommended_change")
+        
+        return Response({
+            "metrics": agent_metrics,
+            "recommendations": list(recommendations)
+        })
+
     @action(detail=True, methods=["get", "post"], url_path="documents")
     def documents(self, request, pk=None):
         import os
@@ -941,4 +980,27 @@ class ManualSourceViewSet(viewsets.ModelViewSet):
     queryset = ManualSource.objects.all().order_by('-created_at')
     serializer_class = ManualSourceSerializer
     filterset_fields = ['agent']
+
+class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
+    from strategy.models import AgentImprovementRecommendation
+    from strategy.serializers import AgentImprovementRecommendationSerializer
+    queryset = AgentImprovementRecommendation.objects.all()
+    serializer_class = AgentImprovementRecommendationSerializer
+    
+    @action(detail=True, methods=['post'])
+    def accept(self, request, pk=None):
+        recommendation = self.get_object()
+        if recommendation.status != "proposed":
+            return Response({"error": "Only proposed recommendations can be accepted."}, status=400)
+            
+        agent = recommendation.agent
+        # Apply the recommendation to the agent's system prompt
+        if recommendation.recommended_change:
+            agent.system_prompt += f"\n\nImprovement Rule: {recommendation.recommended_change}"
+            agent.save()
+            
+        recommendation.status = "accepted"
+        recommendation.save()
+        
+        return Response({"status": "accepted", "agent_name": agent.name, "new_prompt": agent.system_prompt})
 
