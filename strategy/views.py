@@ -1068,11 +1068,10 @@ class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
             # Record the version
             from strategy.models import PromptTemplateVersion
             PromptTemplateVersion.objects.create(
-                template=template,
+                prompt_template=template,
                 version_number=template.version,
                 prompt_body=template.prompt_body,
-                created_by=request.user,
-                change_notes=f"Improvement from Agent Evaluation: {recommendation.issue_type}"
+                changelog=f"Improvement from Agent Evaluation: {recommendation.issue_type}"
             )
         else:
             # 1. Create a new PromptTemplate
