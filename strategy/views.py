@@ -989,7 +989,9 @@ class EvaluationAssignmentViewSet(viewsets.ModelViewSet):
     serializer_class = EvaluationAssignmentSerializer
     
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = EvaluationAssignment.objects.filter(
+            agent__topic__owner=self.request.user
+        ).order_by('sort_order')
         agent_id = self.request.query_params.get('agent_id')
         if agent_id:
             queryset = queryset.filter(agent_id=agent_id)
@@ -998,13 +1000,20 @@ class EvaluationAssignmentViewSet(viewsets.ModelViewSet):
 class EvaluationRunViewSet(viewsets.ModelViewSet):
     queryset = EvaluationRun.objects.all().order_by('-created_at')
     serializer_class = EvaluationRunSerializer
+    
+    def get_queryset(self):
+        return EvaluationRun.objects.filter(
+            agent_trace__agent__topic__owner=self.request.user
+        ).order_by('-created_at')
 
 class AgentEvaluationHistoryViewSet(viewsets.ModelViewSet):
     queryset = AgentEvaluationHistory.objects.all().order_by('-created_at')
     serializer_class = AgentEvaluationHistorySerializer
     
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = AgentEvaluationHistory.objects.filter(
+            agent__topic__owner=self.request.user
+        ).order_by('-created_at')
         agent_id = self.request.query_params.get('agent_id')
         if agent_id:
             queryset = queryset.filter(agent_id=agent_id)
@@ -1014,6 +1023,11 @@ class ManualSourceViewSet(viewsets.ModelViewSet):
     queryset = ManualSource.objects.all().order_by('-created_at')
     serializer_class = ManualSourceSerializer
     filterset_fields = ['agent']
+    
+    def get_queryset(self):
+        return ManualSource.objects.filter(
+            agent__topic__owner=self.request.user
+        ).order_by('-created_at')
 
 class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
     from strategy.models import AgentImprovementRecommendation
@@ -1050,6 +1064,16 @@ class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
             template.prompt_body = recommendation.recommended_change
             template.version += 1
             template.save()
+            
+            # Record the version
+            from strategy.models import PromptTemplateVersion
+            PromptTemplateVersion.objects.create(
+                template=template,
+                version_number=template.version,
+                prompt_body=template.prompt_body,
+                created_by=request.user,
+                change_notes=f"Improvement from Agent Evaluation: {recommendation.issue_type}"
+            )
         else:
             # 1. Create a new PromptTemplate
             template = PromptTemplate.objects.create(

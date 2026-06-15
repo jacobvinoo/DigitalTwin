@@ -20,7 +20,7 @@ describe('WorkflowAnalytics', () => {
         overall_kpis: {
           avg_chain_score: 8.5,
           improvement_adoption_rate: 90.0,
-          avg_revisions: 2.0,
+          avg_recommendations: 2.0,
           hallucination_risk: 0.5
         },
         metrics: [
@@ -30,7 +30,7 @@ describe('WorkflowAnalytics', () => {
             score: 8.5,
             trend: 0.2,
             adoption: 90.0,
-            revisions: 2,
+            recommendations_count: 2,
             executions: 10
           }
         ],

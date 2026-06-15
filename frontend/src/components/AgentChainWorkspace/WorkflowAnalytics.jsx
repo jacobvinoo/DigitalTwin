@@ -47,7 +47,7 @@ export default function WorkflowAnalytics({ topicId }) {
   const kpis = data.overall_kpis || {
     avg_chain_score: "0.0",
     improvement_adoption_rate: "0.0",
-    avg_revisions: "0.0",
+    avg_recommendations: "0.0",
     hallucination_risk: "0.0"
   };
 
@@ -86,7 +86,7 @@ export default function WorkflowAnalytics({ topicId }) {
           <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex items-start justify-between">
             <div>
               <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Avg Recommendations</p>
-              <p className="text-3xl font-bold text-amber-600">{kpis.avg_revisions}</p>
+              <p className="text-3xl font-bold text-amber-600">{kpis.avg_recommendations}</p>
             </div>
             <div className="p-2 bg-amber-50 rounded-lg"><Clock size={20} className="text-amber-600" /></div>
           </div>
@@ -142,7 +142,7 @@ export default function WorkflowAnalytics({ topicId }) {
                         <span>{m.adoption}%</span>
                       </div>
                     </td>
-                    <td className="p-4">{m.revisions}x</td>
+                    <td className="p-4">{m.recommendations_count}x</td>
                   </tr>
                 ))}
               </tbody>
