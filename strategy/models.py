@@ -692,6 +692,7 @@ class PromptTemplate(models.Model):
             ("writing", "Writing"),
             ("evaluation", "Evaluation"),
             ("memory", "Memory"),
+            ("improvement_rule", "Improvement Rule"),
             ("custom", "Custom"),
         ],
     )

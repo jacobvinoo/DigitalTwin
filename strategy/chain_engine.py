@@ -192,6 +192,10 @@ class AgentChainExecutor:
                 trace.completed_at = timezone.now()
                 trace.save()
                 
+                # Run Evaluation & Improvement loop automatically for this trace
+                from strategy.evaluation_engine import run_post_agent_evaluation
+                run_post_agent_evaluation(trace)
+                
                 completed_outputs[agent.id] = output
                 
             except Exception as e:

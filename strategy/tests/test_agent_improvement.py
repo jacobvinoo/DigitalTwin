@@ -67,7 +67,37 @@ class AgentImprovementLoopTests(TestCase):
         self.assertEqual(response.status_code, 200)
         
         recommendation.refresh_from_db()
-        self.assertEqual(recommendation.status, "accepted")
+        self.assertEqual(recommendation.status, "applied")
         
-        self.agent.refresh_from_db()
-        self.assertIn("Always cite 3 sources.", self.agent.system_prompt)
+        # Verify that a PromptTemplate was created and assigned
+        from strategy.models import AgentPromptAssignment
+        assignments = AgentPromptAssignment.objects.filter(agent=self.agent, prompt_template__category="improvement_rule")
+        self.assertEqual(assignments.count(), 1)
+        self.assertEqual(assignments.first().prompt_template.prompt_body, "Always cite 3 sources.")
+
+    def test_run_post_agent_evaluation(self):
+        # Create a trace and try running the shared engine directly
+        version = ChainExecutionVersion.objects.create(
+            topic=self.topic,
+            version_number=1,
+            status="completed",
+            started_by=self.user
+        )
+        trace = AgentRunTrace.objects.create(
+            execution_version=version,
+            agent=self.agent,
+            run_order=1,
+            output_payload={"content": "Here is an output with no citations."}
+        )
+        
+        from strategy.evaluation_engine import run_post_agent_evaluation
+        # Ensure we have the assignment setup in setUp()
+        evaluations = run_post_agent_evaluation(trace)
+        
+        self.assertIsInstance(evaluations, list)
+        
+        # Verify that an EvaluationRun was created
+        self.assertTrue(EvaluationRun.objects.filter(agent_trace=trace).exists())
+        
+        # Verify that AgentEvaluationHistory was created
+        self.assertTrue(AgentEvaluationHistory.objects.filter(agent=self.agent, execution_version=version).exists())

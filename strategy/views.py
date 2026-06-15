@@ -127,13 +127,19 @@ class TopicViewSet(viewsets.ModelViewSet):
                 score = 0
                 trend = 0
             
+            agent_recommendations = AgentImprovementRecommendation.objects.filter(agent=agent)
+            total_recs = agent_recommendations.count()
+            applied_recs = agent_recommendations.filter(status="applied").count()
+            
+            acceptance_rate = (applied_recs / total_recs * 100) if total_recs > 0 else 100
+            
             agent_metrics.append({
                 "id": agent.id,
                 "agent": agent.name,
                 "score": round(score, 1),
                 "trend": trend,
-                "acceptance": 100, # mock
-                "revisions": 0, # mock
+                "acceptance": round(acceptance_rate, 1),
+                "revisions": total_recs,
                 "executions": executions
             })
             
@@ -984,8 +990,11 @@ class ManualSourceViewSet(viewsets.ModelViewSet):
 class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
     from strategy.models import AgentImprovementRecommendation
     from strategy.serializers import AgentImprovementRecommendationSerializer
-    queryset = AgentImprovementRecommendation.objects.all()
     serializer_class = AgentImprovementRecommendationSerializer
+    
+    def get_queryset(self):
+        from strategy.models import AgentImprovementRecommendation
+        return AgentImprovementRecommendation.objects.filter(agent__topic__owner=self.request.user)
     
     @action(detail=True, methods=['post'])
     def accept(self, request, pk=None):
@@ -994,13 +1003,32 @@ class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
             return Response({"error": "Only proposed recommendations can be accepted."}, status=400)
             
         agent = recommendation.agent
-        # Apply the recommendation to the agent's system prompt
+        
+        # Apply the recommendation by creating a new PromptTemplate assignment
         if recommendation.recommended_change:
-            agent.system_prompt += f"\n\nImprovement Rule: {recommendation.recommended_change}"
-            agent.save()
+            from strategy.models import PromptTemplate, AgentPromptAssignment
             
-        recommendation.status = "accepted"
+            # 1. Create a new PromptTemplate
+            template = PromptTemplate.objects.create(
+                name=f"Improvement Rule: {recommendation.issue_type}",
+                category="improvement_rule",
+                description=f"Generated from poor {recommendation.issue_type} score. Problem: {recommendation.problem}",
+                prompt_body=recommendation.recommended_change,
+                version=1,
+                created_by=request.user
+            )
+            
+            # 2. Assign it to the agent
+            AgentPromptAssignment.objects.create(
+                agent=agent,
+                prompt_template=template,
+                sort_order=999, # Put it at the end
+                enabled=True,
+                required=True
+            )
+            
+        recommendation.status = "applied"
         recommendation.save()
         
-        return Response({"status": "accepted", "agent_name": agent.name, "new_prompt": agent.system_prompt})
+        return Response({"status": "applied", "agent_name": agent.name})
 
