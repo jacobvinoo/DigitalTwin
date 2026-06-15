@@ -141,7 +141,7 @@ class TopicViewSet(viewsets.ModelViewSet):
                 "score": round(score, 1),
                 "trend": trend,
                 "adoption": round(adoption_rate, 1),
-                "revisions": total_recs,
+                "recommendations_count": total_recs,
                 "executions": executions,
                 "hallucination": hallucination
             })
@@ -154,11 +154,11 @@ class TopicViewSet(viewsets.ModelViewSet):
         # Calculate overall KPIs
         total_agents = len(agent_metrics)
         avg_chain_score = sum(m["score"] for m in agent_metrics) / total_agents if total_agents > 0 else 0
-        total_recs_all = sum(m["revisions"] for m in agent_metrics)
+        total_recs_all = sum(m["recommendations_count"] for m in agent_metrics)
         total_applied = sum(1 for m in AgentImprovementRecommendation.objects.filter(agent__in=agents, status="applied"))
         total_all_status = AgentImprovementRecommendation.objects.filter(agent__in=agents).count()
         overall_adoption = (total_applied / total_all_status * 100) if total_all_status > 0 else 100
-        avg_revisions = total_all_status / total_agents if total_agents > 0 else 0
+        avg_recommendations = total_all_status / total_agents if total_agents > 0 else 0
         
         # Hallucination risk: higher hallucination score (1-10) is better, so risk is (10 - score) * 10
         avg_hallucination = sum(m["hallucination"] for m in agent_metrics) / total_agents if total_agents > 0 else 10
@@ -167,7 +167,7 @@ class TopicViewSet(viewsets.ModelViewSet):
         overall_kpis = {
             "avg_chain_score": round(avg_chain_score, 1),
             "improvement_adoption_rate": round(overall_adoption, 1),
-            "avg_revisions": round(avg_revisions, 1),
+            "avg_recommendations": round(avg_recommendations, 1),
             "hallucination_risk": round(hallucination_risk, 1)
         }
         
@@ -954,10 +954,14 @@ class AgentPromptAssignmentViewSet(viewsets.ModelViewSet):
     serializer_class = AgentPromptAssignmentSerializer
     
     def get_queryset(self):
-        queryset = super().get_queryset()
-        agent_id = self.request.query_params.get('agent_id')
+        queryset = AgentPromptAssignment.objects.filter(
+            agent__topic__owner=self.request.user
+        ).order_by("sort_order")
+        
+        agent_id = self.request.query_params.get("agent_id")
         if agent_id:
             queryset = queryset.filter(agent_id=agent_id)
+            
         return queryset
 
 class PromptPackViewSet(viewsets.ModelViewSet):
@@ -1061,7 +1065,7 @@ class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
             AgentPromptAssignment.objects.create(
                 agent=agent,
                 prompt_template=template,
-                sort_order=999, # Put it at the end
+                sort_order=800, # Evaluation-derived improvements
                 enabled=True,
                 required=True
             )
