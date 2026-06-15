@@ -56,7 +56,7 @@ describe('WorkflowAnalytics', () => {
     // Check KPI titles
     expect(screen.getByText('Avg Chain Score')).toBeInTheDocument();
     expect(screen.getByText('Improvement Adoption Rate')).toBeInTheDocument();
-    expect(screen.getByText('Avg Revisions')).toBeInTheDocument();
+    expect(screen.getByText('Avg Recommendations')).toBeInTheDocument();
     expect(screen.getByText('Hallucination Risk')).toBeInTheDocument();
     
     // Dynamic KPI values

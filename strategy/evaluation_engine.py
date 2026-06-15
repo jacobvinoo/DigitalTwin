@@ -65,19 +65,11 @@ def run_post_agent_evaluation(agent_trace):
             
             eval_data = eval_res.data
             if isinstance(eval_data, dict):
-                score = None
-                if et.score_field and et.score_field in eval_data:
-                    score = eval_data.get(et.score_field)
-                
-                if score is None:
-                    score = eval_data.get("score", None)
-                    if score is None:
-                        for k, v in eval_data.items():
-                            if k.endswith("_score") and isinstance(v, (int, float)):
-                                score = v
-                                break
-                if score is None:
-                    score = 0
+                score_key = et.score_field if et.score_field else "score"
+                if score_key in eval_data:
+                    score = eval_data.get(score_key)
+                else:
+                    raise ValueError(f"Output schema missing configured score_field '{score_key}'")
                 
                 feedback = eval_data.get("feedback", "No direct feedback key.")
                 rich_output = eval_data
@@ -115,12 +107,53 @@ def run_post_agent_evaluation(agent_trace):
     agent_trace.save(update_fields=['validation_result'])
     
     # Calculate aggregates
-    avg_score = sum(e.get("score", 0) for e in evaluations) / len(evaluations) if evaluations else 0
+    # Weights for specific evaluation categories
+    weights = {
+        "quality": 0.25,
+        "evidence": 0.30,
+        "executive": 0.20,
+        "hallucination": 0.25
+    }
     
-    quality = next((e.get("score", 0) for e in evaluations if "quality" in str(e.get("evaluator", "")).lower()), avg_score)
-    evidence = next((e.get("score", 0) for e in evaluations if "evidence" in str(e.get("evaluator", "")).lower()), avg_score)
-    executive = next((e.get("score", 0) for e in evaluations if "executive" in str(e.get("evaluator", "")).lower()), avg_score)
-    hallucination = next((e.get("score", 0) for e in evaluations if "hallucination" in str(e.get("evaluator", "")).lower()), avg_score)
+    total_weight = 0
+    weighted_sum = 0
+    fallback_sum = 0
+    fallback_count = 0
+    
+    for e in evaluations:
+        cat = e.get("category", "")
+        sc = e.get("score", 0)
+        
+        # We try to match the category closely.
+        weight = weights.get(cat, None)
+        
+        # If the template's category wasn't explicitly one of these, we can fallback to matching the evaluator name
+        if weight is None:
+            eval_name = str(e.get("evaluator", "")).lower()
+            if "quality" in eval_name: weight = 0.25
+            elif "evidence" in eval_name: weight = 0.30
+            elif "executive" in eval_name: weight = 0.20
+            elif "hallucination" in eval_name: weight = 0.25
+            
+        if weight is not None:
+            total_weight += weight
+            weighted_sum += sc * weight
+        else:
+            fallback_sum += sc
+            fallback_count += 1
+            
+    if total_weight > 0:
+        # If there are categories with defined weights, we normalize across only those weights.
+        avg_score = weighted_sum / total_weight
+    else:
+        # If no weighted categories exist, fallback to simple average.
+        avg_score = fallback_sum / fallback_count if fallback_count > 0 else 0
+        
+    # Extract specific scores for the DB model
+    quality = next((e.get("score", 0) for e in evaluations if "quality" in str(e.get("category", "")).lower() or "quality" in str(e.get("evaluator", "")).lower()), avg_score)
+    evidence = next((e.get("score", 0) for e in evaluations if "evidence" in str(e.get("category", "")).lower() or "evidence" in str(e.get("evaluator", "")).lower()), avg_score)
+    executive = next((e.get("score", 0) for e in evaluations if "executive" in str(e.get("category", "")).lower() or "executive" in str(e.get("evaluator", "")).lower()), avg_score)
+    hallucination = next((e.get("score", 0) for e in evaluations if "hallucination" in str(e.get("category", "")).lower() or "safety" in str(e.get("category", "")).lower() or "hallucination" in str(e.get("evaluator", "")).lower()), avg_score)
     
     AgentEvaluationHistory.objects.create(
         agent=agent,

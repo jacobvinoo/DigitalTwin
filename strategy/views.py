@@ -1028,13 +1028,28 @@ class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
             
         agent = recommendation.agent
         
-        # Apply the recommendation by creating a new PromptTemplate assignment
-        if recommendation.recommended_change:
-            from strategy.models import PromptTemplate, AgentPromptAssignment
-            
+        # Apply the recommendation by updating or creating a new PromptTemplate assignment
+        from strategy.models import PromptTemplate, AgentPromptAssignment
+        
+        template_name = f"Improvement Rule: {recommendation.issue_type}"
+        
+        existing_assignment = AgentPromptAssignment.objects.filter(
+            agent=agent,
+            prompt_template__category="improvement_rule",
+            prompt_template__name=template_name
+        ).first()
+        
+        if existing_assignment:
+            # 1. Update the existing PromptTemplate to prevent accumulation of duplicate/conflicting rules
+            template = existing_assignment.prompt_template
+            template.description = f"Updated from poor {recommendation.issue_type} score. Problem: {recommendation.problem}"
+            template.prompt_body = recommendation.recommended_change
+            template.version += 1
+            template.save()
+        else:
             # 1. Create a new PromptTemplate
             template = PromptTemplate.objects.create(
-                name=f"Improvement Rule: {recommendation.issue_type}",
+                name=template_name,
                 category="improvement_rule",
                 description=f"Generated from poor {recommendation.issue_type} score. Problem: {recommendation.problem}",
                 prompt_body=recommendation.recommended_change,

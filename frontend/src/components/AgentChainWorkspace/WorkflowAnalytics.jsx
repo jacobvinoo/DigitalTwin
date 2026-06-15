@@ -85,7 +85,7 @@ export default function WorkflowAnalytics({ topicId }) {
 
           <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex items-start justify-between">
             <div>
-              <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Avg Revisions</p>
+              <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Avg Recommendations</p>
               <p className="text-3xl font-bold text-amber-600">{kpis.avg_revisions}</p>
             </div>
             <div className="p-2 bg-amber-50 rounded-lg"><Clock size={20} className="text-amber-600" /></div>
@@ -115,7 +115,7 @@ export default function WorkflowAnalytics({ topicId }) {
                   <th className="p-4 font-medium border-b border-slate-100">Exec. Score</th>
                   <th className="p-4 font-medium border-b border-slate-100">Trend</th>
                   <th className="p-4 font-medium border-b border-slate-100">Adoption</th>
-                  <th className="p-4 font-medium border-b border-slate-100">Revisions</th>
+                  <th className="p-4 font-medium border-b border-slate-100">Recommendations</th>
                 </tr>
               </thead>
               <tbody className="text-sm text-slate-700 divide-y divide-slate-100">
