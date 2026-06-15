@@ -46,7 +46,7 @@ export default function WorkflowAnalytics({ topicId }) {
 
   const kpis = data.overall_kpis || {
     avg_chain_score: "0.0",
-    acceptance_rate: "0.0",
+    improvement_adoption_rate: "0.0",
     avg_revisions: "0.0",
     hallucination_risk: "0.0"
   };
@@ -77,8 +77,8 @@ export default function WorkflowAnalytics({ topicId }) {
           
           <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex items-start justify-between">
             <div>
-              <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Acceptance Rate</p>
-              <p className="text-3xl font-bold text-green-600">{kpis.acceptance_rate}<span className="text-lg text-slate-400 font-normal">%</span></p>
+              <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Improvement Adoption Rate</p>
+              <p className="text-3xl font-bold text-green-600">{kpis.improvement_adoption_rate}<span className="text-lg text-slate-400 font-normal">%</span></p>
             </div>
             <div className="p-2 bg-green-50 rounded-lg"><CheckCircle size={20} className="text-green-600" /></div>
           </div>
@@ -114,7 +114,7 @@ export default function WorkflowAnalytics({ topicId }) {
                   <th className="p-4 font-medium border-b border-slate-100">Executions</th>
                   <th className="p-4 font-medium border-b border-slate-100">Exec. Score</th>
                   <th className="p-4 font-medium border-b border-slate-100">Trend</th>
-                  <th className="p-4 font-medium border-b border-slate-100">Acceptance</th>
+                  <th className="p-4 font-medium border-b border-slate-100">Adoption</th>
                   <th className="p-4 font-medium border-b border-slate-100">Revisions</th>
                 </tr>
               </thead>
@@ -137,9 +137,9 @@ export default function WorkflowAnalytics({ topicId }) {
                     <td className="p-4">
                       <div className="flex items-center gap-2">
                         <div className="w-full bg-slate-200 rounded-full h-2 max-w-[60px]">
-                          <div className="bg-indigo-500 h-2 rounded-full" style={{ width: `${m.acceptance}%` }}></div>
+                          <div className="bg-indigo-500 h-2 rounded-full" style={{ width: `${m.adoption}%` }}></div>
                         </div>
-                        <span>{m.acceptance}%</span>
+                        <span>{m.adoption}%</span>
                       </div>
                     </td>
                     <td className="p-4">{m.revisions}x</td>

@@ -783,6 +783,7 @@ class EvaluationTemplate(models.Model):
     evaluation_prompt = models.TextField()
     version = models.IntegerField(default=1)
     scoring_schema = models.JSONField(default=dict)
+    score_field = models.CharField(max_length=50, default="score", help_text="The JSON key in the output schema containing the numeric score")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

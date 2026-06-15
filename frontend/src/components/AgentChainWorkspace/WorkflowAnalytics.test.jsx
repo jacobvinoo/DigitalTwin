@@ -19,7 +19,7 @@ describe('WorkflowAnalytics', () => {
       data: {
         overall_kpis: {
           avg_chain_score: 8.5,
-          acceptance_rate: 90.0,
+          improvement_adoption_rate: 90.0,
           avg_revisions: 2.0,
           hallucination_risk: 0.5
         },
@@ -29,7 +29,7 @@ describe('WorkflowAnalytics', () => {
             agent: 'Analysis Node',
             score: 8.5,
             trend: 0.2,
-            acceptance: 90.0,
+            adoption: 90.0,
             revisions: 2,
             executions: 10
           }
@@ -55,7 +55,7 @@ describe('WorkflowAnalytics', () => {
     
     // Check KPI titles
     expect(screen.getByText('Avg Chain Score')).toBeInTheDocument();
-    expect(screen.getByText('Acceptance Rate')).toBeInTheDocument();
+    expect(screen.getByText('Improvement Adoption Rate')).toBeInTheDocument();
     expect(screen.getByText('Avg Revisions')).toBeInTheDocument();
     expect(screen.getByText('Hallucination Risk')).toBeInTheDocument();
     
@@ -71,7 +71,7 @@ describe('WorkflowAnalytics', () => {
     
     expect(await screen.findByText('Agent Node')).toBeInTheDocument();
     expect(screen.getByText('Exec. Score')).toBeInTheDocument();
-    expect(screen.getByText('Acceptance')).toBeInTheDocument();
+    expect(screen.getByText('Adoption')).toBeInTheDocument();
     
     // Check dynamic data agent
     expect(screen.getByText('Analysis Node')).toBeInTheDocument();

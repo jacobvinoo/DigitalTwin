@@ -133,14 +133,14 @@ class TopicViewSet(viewsets.ModelViewSet):
             total_recs = agent_recommendations.count()
             applied_recs = agent_recommendations.filter(status="applied").count()
             
-            acceptance_rate = (applied_recs / total_recs * 100) if total_recs > 0 else 100
+            adoption_rate = (applied_recs / total_recs * 100) if total_recs > 0 else 100
             
             agent_metrics.append({
                 "id": agent.id,
                 "agent": agent.name,
                 "score": round(score, 1),
                 "trend": trend,
-                "acceptance": round(acceptance_rate, 1),
+                "adoption": round(adoption_rate, 1),
                 "revisions": total_recs,
                 "executions": executions,
                 "hallucination": hallucination
@@ -157,7 +157,7 @@ class TopicViewSet(viewsets.ModelViewSet):
         total_recs_all = sum(m["revisions"] for m in agent_metrics)
         total_applied = sum(1 for m in AgentImprovementRecommendation.objects.filter(agent__in=agents, status="applied"))
         total_all_status = AgentImprovementRecommendation.objects.filter(agent__in=agents).count()
-        overall_acceptance = (total_applied / total_all_status * 100) if total_all_status > 0 else 100
+        overall_adoption = (total_applied / total_all_status * 100) if total_all_status > 0 else 100
         avg_revisions = total_all_status / total_agents if total_agents > 0 else 0
         
         # Hallucination risk: higher hallucination score (1-10) is better, so risk is (10 - score) * 10
@@ -166,7 +166,7 @@ class TopicViewSet(viewsets.ModelViewSet):
         
         overall_kpis = {
             "avg_chain_score": round(avg_chain_score, 1),
-            "acceptance_rate": round(overall_acceptance, 1),
+            "improvement_adoption_rate": round(overall_adoption, 1),
             "avg_revisions": round(avg_revisions, 1),
             "hallucination_risk": round(hallucination_risk, 1)
         }

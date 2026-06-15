@@ -65,12 +65,17 @@ def run_post_agent_evaluation(agent_trace):
             
             eval_data = eval_res.data
             if isinstance(eval_data, dict):
-                score = eval_data.get("score", None)
+                score = None
+                if et.score_field and et.score_field in eval_data:
+                    score = eval_data.get(et.score_field)
+                
                 if score is None:
-                    for k, v in eval_data.items():
-                        if k.endswith("_score") and isinstance(v, (int, float)):
-                            score = v
-                            break
+                    score = eval_data.get("score", None)
+                    if score is None:
+                        for k, v in eval_data.items():
+                            if k.endswith("_score") and isinstance(v, (int, float)):
+                                score = v
+                                break
                 if score is None:
                     score = 0
                 
@@ -83,6 +88,7 @@ def run_post_agent_evaluation(agent_trace):
             
             eval_dict = {
                 "evaluator": et.name,
+                "category": getattr(et, "category", "custom"),
                 "score": score,
                 "feedback": feedback,
                 "passed": score >= 7,
@@ -129,12 +135,22 @@ def run_post_agent_evaluation(agent_trace):
     # Generate Improvement Recommendations
     low_evals = [e for e in evaluations if e.get("score", 0) < 7]
     for low in low_evals:
-        try:
-            imp_prompt = f"The agent {agent.name} received a low score ({low.get('score')}) for {low.get('evaluator')}. Output JSON: {json.dumps(low.get('rich_output', {}))}. Please provide a concrete recommendation to append to the agent's system prompt to fix this issue."
-            imp_res = llm.execute(prompt=imp_prompt, prompt_version="1.0", schema_class=ImprovementRecommendationSchema, model="gpt-4o-mini")
-            rec_text = imp_res.data.recommendation if not isinstance(imp_res.data, dict) else imp_res.data.get("recommendation", "")
-        except Exception:
-            rec_text = f"Improve system prompt to address: {low.get('feedback')}"
+        cat = low.get("category", "")
+        if cat == "evidence":
+            rec_text = "Add Source Recording + Evidence Extraction prompt pack"
+        elif cat == "safety" or cat == "hallucination":
+            rec_text = "Add Hallucination Avoidance + Fact Validation"
+        elif cat == "executive":
+            rec_text = "Add Decision Framing + Executive Summary"
+        elif cat == "quality":
+            rec_text = "Add Structured Document Writer"
+        else:
+            try:
+                imp_prompt = f"The agent {agent.name} received a low score ({low.get('score')}) for {low.get('evaluator')}. Output JSON: {json.dumps(low.get('rich_output', {}))}. Please provide a concrete recommendation to append to the agent's system prompt to fix this issue."
+                imp_res = llm.execute(prompt=imp_prompt, prompt_version="1.0", schema_class=ImprovementRecommendationSchema, model="gpt-4o-mini")
+                rec_text = imp_res.data.recommendation if not isinstance(imp_res.data, dict) else imp_res.data.get("recommendation", "")
+            except Exception:
+                rec_text = f"Improve system prompt to address: {low.get('feedback')}"
             
         AgentImprovementRecommendation.objects.create(
             agent=agent,
