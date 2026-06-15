@@ -29,19 +29,27 @@ export default function WorkflowAnalytics({ topicId }) {
     }
   };
 
-  const handleReject = (id) => {
-    // For now just hide it from view
-    setData(prev => ({
-      ...prev,
-      recommendations: prev.recommendations.filter(r => r.id !== id)
-    }));
+  const handleReject = async (id) => {
+    try {
+      await api.post(`/api/recommendations/${id}/reject/`);
+      setData(prev => ({
+        ...prev,
+        recommendations: prev.recommendations.filter(r => r.id !== id)
+      }));
+    } catch (err) {
+      console.error(err);
+      alert("Failed to reject recommendation.");
+    }
   };
 
   if (loading) return <div className="p-8 text-slate-500">Loading analytics...</div>;
 
-  const avgChainScore = data.metrics.length > 0 
-    ? (data.metrics.reduce((acc, curr) => acc + curr.score, 0) / data.metrics.length).toFixed(1)
-    : "0.0";
+  const kpis = data.overall_kpis || {
+    avg_chain_score: "0.0",
+    acceptance_rate: "0.0",
+    avg_revisions: "0.0",
+    hallucination_risk: "0.0"
+  };
 
   return (
     <div className="flex-1 p-8 overflow-y-auto bg-slate-50">
@@ -62,7 +70,7 @@ export default function WorkflowAnalytics({ topicId }) {
           <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex items-start justify-between">
             <div>
               <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Avg Chain Score</p>
-              <p className="text-3xl font-bold text-indigo-700">{avgChainScore}<span className="text-lg text-slate-400 font-normal">/10</span></p>
+              <p className="text-3xl font-bold text-indigo-700">{kpis.avg_chain_score}<span className="text-lg text-slate-400 font-normal">/10</span></p>
             </div>
             <div className="p-2 bg-indigo-50 rounded-lg"><Activity size={20} className="text-indigo-600" /></div>
           </div>
@@ -70,7 +78,7 @@ export default function WorkflowAnalytics({ topicId }) {
           <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex items-start justify-between">
             <div>
               <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Acceptance Rate</p>
-              <p className="text-3xl font-bold text-green-600">88.6<span className="text-lg text-slate-400 font-normal">%</span></p>
+              <p className="text-3xl font-bold text-green-600">{kpis.acceptance_rate}<span className="text-lg text-slate-400 font-normal">%</span></p>
             </div>
             <div className="p-2 bg-green-50 rounded-lg"><CheckCircle size={20} className="text-green-600" /></div>
           </div>
@@ -78,7 +86,7 @@ export default function WorkflowAnalytics({ topicId }) {
           <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex items-start justify-between">
             <div>
               <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Avg Revisions</p>
-              <p className="text-3xl font-bold text-amber-600">1.5</p>
+              <p className="text-3xl font-bold text-amber-600">{kpis.avg_revisions}</p>
             </div>
             <div className="p-2 bg-amber-50 rounded-lg"><Clock size={20} className="text-amber-600" /></div>
           </div>
@@ -86,7 +94,7 @@ export default function WorkflowAnalytics({ topicId }) {
           <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex items-start justify-between">
             <div>
               <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Hallucination Risk</p>
-              <p className="text-3xl font-bold text-red-600">1.2<span className="text-lg text-slate-400 font-normal">%</span></p>
+              <p className="text-3xl font-bold text-red-600">{kpis.hallucination_risk}<span className="text-lg text-slate-400 font-normal">%</span></p>
             </div>
             <div className="p-2 bg-red-50 rounded-lg"><ShieldAlert size={20} className="text-red-600" /></div>
           </div>

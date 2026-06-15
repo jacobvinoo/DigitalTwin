@@ -48,26 +48,45 @@ def run_post_agent_evaluation(agent_trace):
         )
         
         try:
-            eval_res = llm.execute(
-                prompt=eval_prompt,
-                prompt_version=str(et.version),
-                schema_class=EvaluationResultSchema,
-                model="gpt-4o"
-            )
+            if et.scoring_schema:
+                eval_res = llm.execute(
+                    prompt=eval_prompt,
+                    prompt_version=str(et.version),
+                    schema_dict=et.scoring_schema,
+                    model="gpt-4o"
+                )
+            else:
+                eval_res = llm.execute(
+                    prompt=eval_prompt,
+                    prompt_version=str(et.version),
+                    schema_class=EvaluationResultSchema,
+                    model="gpt-4o"
+                )
             
             eval_data = eval_res.data
             if isinstance(eval_data, dict):
-                score = eval_data.get("score", 0)
-                feedback = eval_data.get("feedback", "No feedback provided.")
+                score = eval_data.get("score", None)
+                if score is None:
+                    for k, v in eval_data.items():
+                        if k.endswith("_score") and isinstance(v, (int, float)):
+                            score = v
+                            break
+                if score is None:
+                    score = 0
+                
+                feedback = eval_data.get("feedback", "No direct feedback key.")
+                rich_output = eval_data
             else:
                 score = getattr(eval_data, "score", 0)
                 feedback = getattr(eval_data, "feedback", "No feedback provided.")
+                rich_output = {"score": score, "feedback": feedback}
             
             eval_dict = {
                 "evaluator": et.name,
                 "score": score,
                 "feedback": feedback,
-                "passed": score >= 7
+                "passed": score >= 7,
+                "rich_output": rich_output
             }
             evaluations.append(eval_dict)
             
@@ -111,7 +130,7 @@ def run_post_agent_evaluation(agent_trace):
     low_evals = [e for e in evaluations if e.get("score", 0) < 7]
     for low in low_evals:
         try:
-            imp_prompt = f"The agent {agent.name} received a low score ({low.get('score')}) for {low.get('evaluator')}. Feedback: {low.get('feedback')}. Please provide a concrete recommendation to append to the agent's system prompt to fix this issue."
+            imp_prompt = f"The agent {agent.name} received a low score ({low.get('score')}) for {low.get('evaluator')}. Output JSON: {json.dumps(low.get('rich_output', {}))}. Please provide a concrete recommendation to append to the agent's system prompt to fix this issue."
             imp_res = llm.execute(prompt=imp_prompt, prompt_version="1.0", schema_class=ImprovementRecommendationSchema, model="gpt-4o-mini")
             rec_text = imp_res.data.recommendation if not isinstance(imp_res.data, dict) else imp_res.data.get("recommendation", "")
         except Exception:

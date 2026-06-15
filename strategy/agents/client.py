@@ -23,7 +23,7 @@ class LLMResult:
         self.audit = audit
 
 class LLMClient:
-    def execute(self, prompt: str, prompt_version: str, schema_class: Type[BaseModel], model: str = "gpt-4o"):
+    def execute(self, prompt: str, prompt_version: str, schema_class: Type[BaseModel] = None, schema_dict: dict = None, model: str = "gpt-4o"):
         started = time.monotonic()
         telemetry = {
             "model": model,
@@ -39,7 +39,7 @@ class LLMClient:
         
         raw_text = ""
         try:
-            raw_text, usage = self._call_provider(prompt=prompt, model=model, schema_class=schema_class)
+            raw_text, usage = self._call_provider(prompt=prompt, model=model, schema_class=schema_class, schema_dict=schema_dict)
             telemetry.update({
                 "prompt_tokens": usage.get("prompt_tokens", 0),
                 "completion_tokens": usage.get("completion_tokens", 0),
@@ -84,7 +84,7 @@ class LLMClient:
             logger.error("LLM execution error: %s", str(exc), exc_info=True)
             raise
 
-    def _call_provider(self, prompt: str, model: str, schema_class=None):
+    def _call_provider(self, prompt: str, model: str, schema_class=None, schema_dict=None):
         import os
         import requests
         
@@ -107,8 +107,13 @@ class LLMClient:
             "temperature": 0.2
         }
         
-        if schema_class:
-            raw_schema = schema_class.model_json_schema()
+        if schema_class or schema_dict:
+            if schema_class:
+                raw_schema = schema_class.model_json_schema()
+                schema_name = schema_class.__name__
+            else:
+                raw_schema = schema_dict
+                schema_name = "DynamicSchema"
             
             def make_strict_schema(schema: Any) -> Any:
                 if isinstance(schema, dict):
@@ -127,7 +132,7 @@ class LLMClient:
             payload["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": schema_class.__name__,
+                    "name": schema_name,
                     "schema": json_schema,
                     "strict": True
                 }

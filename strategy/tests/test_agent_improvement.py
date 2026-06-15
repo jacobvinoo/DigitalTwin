@@ -75,6 +75,43 @@ class AgentImprovementLoopTests(TestCase):
         self.assertEqual(assignments.count(), 1)
         self.assertEqual(assignments.first().prompt_template.prompt_body, "Always cite 3 sources.")
 
+    def test_improvement_recommendation_reject(self):
+        # Setup trace
+        version = ChainExecutionVersion.objects.create(
+            topic=self.topic,
+            version_number=1,
+            status="completed",
+            started_by=self.user
+        )
+        trace = AgentRunTrace.objects.create(
+            execution_version=version,
+            agent=self.agent,
+            run_order=1
+        )
+        
+        recommendation = AgentImprovementRecommendation.objects.create(
+            agent=self.agent,
+            execution_version=version,
+            agent_trace=trace,
+            issue_type="Quality Evaluator",
+            source_evaluation="{'score': 5}",
+            problem="Too generic.",
+            recommended_change="Always cite 3 sources.",
+            target_area="prompt",
+            status="proposed"
+        )
+        
+        from rest_framework.test import APIClient
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        
+        # Test reject endpoint
+        response = client.post(f"/api/recommendations/{recommendation.id}/reject/")
+        self.assertEqual(response.status_code, 200)
+        
+        recommendation.refresh_from_db()
+        self.assertEqual(recommendation.status, "rejected")
+
     def test_run_post_agent_evaluation(self):
         # Create a trace and try running the shared engine directly
         version = ChainExecutionVersion.objects.create(

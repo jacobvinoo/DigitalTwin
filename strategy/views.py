@@ -123,9 +123,11 @@ class TopicViewSet(viewsets.ModelViewSet):
                 trend = 0
                 if executions > 1:
                     trend = round(score - histories[1].overall_score, 1)
+                hallucination = histories.first().hallucination_score
             else:
                 score = 0
                 trend = 0
+                hallucination = 10
             
             agent_recommendations = AgentImprovementRecommendation.objects.filter(agent=agent)
             total_recs = agent_recommendations.count()
@@ -140,7 +142,8 @@ class TopicViewSet(viewsets.ModelViewSet):
                 "trend": trend,
                 "acceptance": round(acceptance_rate, 1),
                 "revisions": total_recs,
-                "executions": executions
+                "executions": executions,
+                "hallucination": hallucination
             })
             
         recommendations = AgentImprovementRecommendation.objects.filter(
@@ -148,7 +151,28 @@ class TopicViewSet(viewsets.ModelViewSet):
             status="proposed"
         ).values("id", "agent__name", "issue_type", "problem", "recommended_change")
         
+        # Calculate overall KPIs
+        total_agents = len(agent_metrics)
+        avg_chain_score = sum(m["score"] for m in agent_metrics) / total_agents if total_agents > 0 else 0
+        total_recs_all = sum(m["revisions"] for m in agent_metrics)
+        total_applied = sum(1 for m in AgentImprovementRecommendation.objects.filter(agent__in=agents, status="applied"))
+        total_all_status = AgentImprovementRecommendation.objects.filter(agent__in=agents).count()
+        overall_acceptance = (total_applied / total_all_status * 100) if total_all_status > 0 else 100
+        avg_revisions = total_all_status / total_agents if total_agents > 0 else 0
+        
+        # Hallucination risk: higher hallucination score (1-10) is better, so risk is (10 - score) * 10
+        avg_hallucination = sum(m["hallucination"] for m in agent_metrics) / total_agents if total_agents > 0 else 10
+        hallucination_risk = (10 - avg_hallucination) * 10
+        
+        overall_kpis = {
+            "avg_chain_score": round(avg_chain_score, 1),
+            "acceptance_rate": round(overall_acceptance, 1),
+            "avg_revisions": round(avg_revisions, 1),
+            "hallucination_risk": round(hallucination_risk, 1)
+        }
+        
         return Response({
+            "overall_kpis": overall_kpis,
             "metrics": agent_metrics,
             "recommendations": list(recommendations)
         })
@@ -1031,4 +1055,14 @@ class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
         recommendation.save()
         
         return Response({"status": "applied", "agent_name": agent.name})
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        recommendation = self.get_object()
+        if recommendation.status != "proposed":
+            return Response({"error": "Only proposed recommendations can be rejected."}, status=400)
+            
+        recommendation.status = "rejected"
+        recommendation.save()
+        return Response({"status": "rejected", "agent_name": recommendation.agent.name})
 
