@@ -124,13 +124,37 @@ class LLMClient:
             
             def make_strict_schema(schema: Any) -> Any:
                 if isinstance(schema, dict):
+                    # Ensure a 'type' key exists if omitted
+                    if "type" not in schema:
+                        if not any(k in schema for k in ("anyOf", "allOf", "oneOf", "$ref")):
+                            if "properties" in schema:
+                                schema["type"] = "object"
+                            elif "items" in schema:
+                                schema["type"] = "array"
+                            else:
+                                schema["type"] = "string"
+                            
                     # OpenAI structured outputs require additionalProperties=False
                     if schema.get("type") == "object":
                         schema["additionalProperties"] = False
                         if "properties" in schema:
                             schema["required"] = list(schema["properties"].keys())
-                    for k, v in schema.items():
-                        schema[k] = make_strict_schema(v)
+                            for prop_name, prop_schema in schema["properties"].items():
+                                schema["properties"][prop_name] = make_strict_schema(prop_schema)
+                    elif schema.get("type") == "array":
+                        if "items" in schema:
+                            if isinstance(schema["items"], dict):
+                                schema["items"] = make_strict_schema(schema["items"])
+                            elif isinstance(schema["items"], list):
+                                schema["items"] = [make_strict_schema(item) for item in schema["items"]]
+                                
+                    for key in ["anyOf", "allOf", "oneOf"]:
+                        if key in schema and isinstance(schema[key], list):
+                            schema[key] = [make_strict_schema(item) for item in schema[key]]
+                            
+                    if "$defs" in schema:
+                        for def_name, def_schema in schema["$defs"].items():
+                            schema["$defs"][def_name] = make_strict_schema(def_schema)
                 elif isinstance(schema, list):
                     return [make_strict_schema(item) for item in schema]
                 return schema

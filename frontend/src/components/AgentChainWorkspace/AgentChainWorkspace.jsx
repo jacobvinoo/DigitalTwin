@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ReactFlow, Background, Controls, useNodesState, useEdgesState, addEdge as addReactFlowEdge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Settings, Play, CheckCircle, BarChart2, GitBranch, ArrowLeft, Plus, TrendingUp } from 'lucide-react';
+import { Settings, Play, CheckCircle, BarChart2, GitBranch, ArrowLeft, Plus, TrendingUp, FileText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AgentNode from './AgentNode';
 import AgentDetailPanel from './AgentDetailPanel';
 import WorkflowAnalytics from './WorkflowAnalytics';
 import ImprovementDashboard from './ImprovementDashboard';
+import ArtifactsDashboard from './ArtifactsDashboard';
 import { mapBackendToReactFlow } from '../../utils/agentGraphMapper';
 import { api } from '../../api';
 
@@ -26,6 +27,12 @@ const AgentChainWorkspace = ({ topicId }) => {
   const [topic, setTopic] = useState(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
+  
+  // Chain Execution State
+  const [versions, setVersions] = useState([]);
+  const [selectedVersionId, setSelectedVersionId] = useState('');
+  const [traces, setTraces] = useState([]);
+  const [isRunning, setIsRunning] = useState(false);
 
   // Fetch Graph from Backend
   const loadGraph = useCallback(async () => {
@@ -46,9 +53,80 @@ const AgentChainWorkspace = ({ topicId }) => {
     }
   }, [topicId, setNodes, setEdges]);
 
+  const loadVersions = useCallback(async () => {
+    try {
+      const res = await api.get(`/api/topics/${topicId}/chain-versions/`);
+      setVersions(res.data);
+      if (res.data.length > 0 && !selectedVersionId) {
+        setSelectedVersionId(res.data[0].id);
+      }
+    } catch (err) {
+      console.error("Failed to load versions", err);
+    }
+  }, [topicId, selectedVersionId]);
+
+  const loadTraces = useCallback(async (versionId) => {
+    if (!versionId) return;
+    try {
+      const res = await api.get(`/api/chain-versions/${versionId}/trace/`);
+      setTraces(res.data);
+      
+      // Update nodes visual state based on trace
+      setNodes(nds => nds.map(n => {
+        const t = res.data.find(trace => String(trace.agent_id) === String(n.id) || String(trace.agent_id) === String(n.data?.backendId));
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            isComplete: t?.status === "completed",
+            hasError: t?.status === "failed",
+            isRunning: t?.status === "running"
+          }
+        };
+      }));
+    } catch (err) {
+      console.error("Failed to load traces", err);
+    }
+  }, [setNodes]);
+
   useEffect(() => {
     loadGraph();
-  }, [loadGraph]);
+    loadVersions();
+  }, [loadGraph, loadVersions]);
+
+  useEffect(() => {
+    if (selectedVersionId) {
+      loadTraces(selectedVersionId);
+    }
+  }, [selectedVersionId, loadTraces]);
+
+  // Polling while running
+  useEffect(() => {
+    let interval;
+    if (isRunning) {
+        // Fetch versions to get the newest version if it hasn't popped up yet
+        interval = setInterval(async () => {
+            try {
+                const versionsRes = await api.get(`/api/topics/${topicId}/chain-versions/`);
+                setVersions(versionsRes.data);
+                if (versionsRes.data.length > 0) {
+                    const latestVersion = versionsRes.data[0];
+                    if (selectedVersionId !== latestVersion.id) {
+                        setSelectedVersionId(latestVersion.id);
+                    }
+                    await loadTraces(latestVersion.id);
+                    
+                    if (latestVersion.status === "completed" || latestVersion.status === "failed") {
+                        setIsRunning(false);
+                    }
+                }
+            } catch (err) {
+                console.error("Polling error:", err);
+            }
+        }, 3000);
+    }
+    return () => clearInterval(interval);
+  }, [isRunning, topicId, selectedVersionId, loadTraces]);
 
   const handleSaveTitle = async () => {
     if (!editedTitle.trim()) {
@@ -139,35 +217,53 @@ const AgentChainWorkspace = ({ topicId }) => {
   const onNodeClick = (event, node) => {
     // Select the node to configure its prompt library assignments
     setSelectedNode(node);
-    setSelectedTrace(null);
+    
+    // Find trace for this node in the current version
+    const agentId = node.data?.backendId || node.id;
+    const nodeTrace = traces.find(t => String(t.agent_id) === String(agentId));
+    
+    if (nodeTrace) {
+        setSelectedTrace({
+            ...nodeTrace,
+            node_id: node.id,
+            agentName: nodeTrace.agent_name,
+            model: "unknown",
+            tokens: 0,
+            cost: 0,
+            latency: 0,
+            messages: [] // Detailed messages might need separate fetch if we really want to simulate
+        });
+    } else {
+        setSelectedTrace(null);
+    }
+  };
+
+  const onEdgeClick = (event, edge) => {
+    const targetNode = nodes.find(n => n.id === edge.target);
+    if (targetNode) {
+      onNodeClick(event, targetNode);
+    }
   };
 
   const handleRunChain = async () => {
-    // Topologically run nodes for visual feedback
-    const sortedNodes = [...nodes]; // Assuming simple sequential array iteration for now
-    
-    for (const node of sortedNodes) {
-      // Set node to running
-      setNodes(nds => nds.map(n => 
-        n.id === node.id ? { ...n, data: { ...n.data, isRunning: true, isComplete: false } } : n
-      ));
-
-      try {
-        await api.post(`/api/agents/${node.id}/run/`);
-      } catch (err) {
-        console.error(`Failed to run agent ${node.id}`, err);
-      }
-
-      // Mark node as complete
-      setNodes(nds => nds.map(n => 
-        n.id === node.id ? { ...n, data: { ...n.data, isRunning: false, isComplete: true } } : n
-      ));
+    if (isRunning) return;
+    try {
+      setIsRunning(true);
+      // Execute the chain (now async in backend)
+      await api.post(`/api/topics/${topicId}/execute-chain/`, {
+          trigger_input: { trigger: "manual" }
+      });
+      
+      // Give the backend a tiny headstart to create the version
+      await new Promise(r => setTimeout(r, 500));
+      
+      // Polling effect above will pick up the new version and its traces!
+    } catch (err) {
+      console.error("Failed to run chain", err);
+      const backendError = err.response?.data?.error || err.message;
+      alert(`Failed to run chain: ${backendError}`);
+      setIsRunning(false);
     }
-    
-    // Reset completion states after 3 seconds
-    setTimeout(() => {
-      setNodes(nds => nds.map(n => ({ ...n, data: { ...n.data, isComplete: false } })));
-    }, 3000);
   };
 
   const onPaneClick = () => {
@@ -216,9 +312,26 @@ const AgentChainWorkspace = ({ topicId }) => {
           </button>
           <button 
             onClick={handleRunChain}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors">
-            <Play size={16} /> Run Chain
+            disabled={isRunning}
+            className={`w-full font-medium py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors ${isRunning ? 'bg-gray-400 text-white cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+          >
+            {isRunning ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Play size={16} />}
+            {isRunning ? 'Running...' : 'Run Chain'}
           </button>
+          
+          <div className="pt-4 border-t border-gray-100">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Execution History</p>
+            <select
+                className="w-full bg-white border border-gray-300 text-gray-700 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block p-2"
+                value={selectedVersionId}
+                onChange={(e) => setSelectedVersionId(e.target.value)}
+            >
+                <option value="">Select a run...</option>
+                {versions.map(v => (
+                    <option key={v.id} value={v.id}>v{v.version_number} - {new Date(v.started_at).toLocaleTimeString()}</option>
+                ))}
+            </select>
+          </div>
           
           <div className="pt-4 border-t border-gray-100">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Views</p>
@@ -240,6 +353,12 @@ const AgentChainWorkspace = ({ topicId }) => {
             >
               <TrendingUp size={16} className={viewMode === 'improvements' ? 'text-indigo-600' : 'text-gray-400'} /> Improvements
             </button>
+            <button 
+              onClick={() => setViewMode('artifacts')}
+              className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${viewMode === 'artifacts' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
+            >
+              <FileText size={16} className={viewMode === 'artifacts' ? 'text-indigo-600' : 'text-gray-400'} /> Generated Artifacts
+            </button>
           </div>
         </div>
       </div>
@@ -257,6 +376,7 @@ const AgentChainWorkspace = ({ topicId }) => {
             onEdgesDelete={onEdgesDelete}
             onNodeDragStop={onNodeDragStop}
             onNodeClick={onNodeClick}
+            onEdgeClick={onEdgeClick}
             onPaneClick={onPaneClick}
             nodeTypes={nodeTypes}
             fitView
@@ -268,11 +388,13 @@ const AgentChainWorkspace = ({ topicId }) => {
         </div>
       ) : viewMode === 'analytics' ? (
         <WorkflowAnalytics topicId={topicId} />
-      ) : (
+      ) : viewMode === 'improvements' ? (
         <ImprovementDashboard topicId={topicId} />
+      ) : (
+        <ArtifactsDashboard topicId={topicId} />
       )}
 
-      {(selectedNode || selectedTrace) && (
+      {(selectedNode || selectedTrace) && viewMode === 'canvas' && (
         <AgentDetailPanel 
           selectedNode={selectedNode || { id: selectedTrace?.node_id, data: { name: selectedTrace?.agentName || 'Agent' } }} 
           selectedTrace={selectedTrace}

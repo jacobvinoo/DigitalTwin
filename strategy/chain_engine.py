@@ -160,10 +160,17 @@ class AgentChainExecutor:
                 agent=agent,
                 run_order=run_order,
                 status="running",
-                input_payload=input_payload,
+                input_payload=trigger_input if agent.is_entrypoint else {},
+                mapped_input_payload=input_payload,
                 prompt_snapshot=prompt,
                 started_at=timezone.now()
             )
+            
+            # Attach active experiments
+            from strategy.models import AgentImprovementExperiment
+            active_experiments = AgentImprovementExperiment.objects.filter(agent=agent, status="monitoring")
+            if active_experiments.exists():
+                trace.active_experiments.set(active_experiments)
             
             # Record Prompt Traces
             for i, assignment in enumerate(assignments, start=1):
@@ -179,18 +186,55 @@ class AgentChainExecutor:
                 llm = get_llm_client()
                 # If using mock, our test LLM doesn't have true schema validation, but we expect dict back.
                 # Standard LLMClient in product has .execute or .complete_json
+                telemetry = {}
                 if hasattr(llm, "complete_json"):
                     output = llm.complete_json(prompt=prompt, output_schema=agent.output_schema, model=agent.model_name)
                 else:
-                    output = llm.execute(prompt=prompt, schema_class=agent.output_schema, model=agent.model_name)
-                    # For tests where LLM is completely mocked out, we might just get dict
-                    if not isinstance(output, dict):
-                        output = getattr(output, "data", {})
+                    exec_result = llm.execute(prompt=prompt, schema_dict=agent.output_schema, model=agent.model_name)
+                    if hasattr(exec_result, "telemetry"):
+                        telemetry = exec_result.telemetry
+                    if not isinstance(exec_result, dict):
+                        output = getattr(exec_result, "data", {})
+                    else:
+                        output = exec_result
                 
+                # Convert Pydantic objects to dict if necessary
+                if not isinstance(output, dict) and hasattr(output, "dict"):
+                    output = output.dict()
+                elif not isinstance(output, dict):
+                    output = {}
+                    
                 trace.output_payload = output
+                trace.telemetry = telemetry
                 trace.status = "completed"
                 trace.completed_at = timezone.now()
                 trace.save()
+                
+                # Create AgentArtifact
+                from strategy.models import AgentArtifact, SourceRecord
+                markdown_content = output.get("markdown_content", "")
+                artifact_type = "markdown" if markdown_content else "json"
+                
+                AgentArtifact.objects.create(
+                    execution_version=version,
+                    agent_trace=trace,
+                    artifact_type=artifact_type,
+                    title=f"{agent.name} Output",
+                    content=markdown_content,
+                    payload=output
+                )
+                
+                # Create SourceRecords
+                sources = output.get("sources", [])
+                for src in sources:
+                    SourceRecord.objects.create(
+                        topic=topic,
+                        agent_trace=trace,
+                        title=src.get("title", "Unknown"),
+                        url=src.get("url", ""),
+                        publisher=src.get("publisher", ""),
+                        source_type=src.get("source_type", "web")
+                    )
                 
                 # Run Evaluation & Improvement loop automatically for this trace
                 from strategy.evaluation_engine import run_post_agent_evaluation

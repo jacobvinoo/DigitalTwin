@@ -233,6 +233,11 @@ def run_post_agent_evaluation(agent_trace):
         
     # Update running experiments
     from .models import AgentImprovementExperiment
+    # Constants for Human Review weighting
+    HUMAN_REVIEW_VETO_THRESHOLD = 5
+    HUMAN_REVIEW_WEIGHT = 0.4
+    AUTO_EVALUATION_WEIGHT = 0.6
+
     active_experiments = AgentImprovementExperiment.objects.filter(agent=agent, status="monitoring")
     for exp in active_experiments:
         exp.runs_observed += 1
@@ -240,7 +245,32 @@ def run_post_agent_evaluation(agent_trace):
         # Calculate new moving average
         recent_histories = AgentEvaluationHistory.objects.filter(agent=agent).order_by('-created_at')[:exp.runs_observed]
         if recent_histories.exists():
-            exp.post_change_score = sum(h.overall_score for h in recent_histories) / recent_histories.count()
+            from .models import HumanOutputReview
+            vetoed = False
+            total_weighted_score = 0
+            
+            for h in recent_histories:
+                human_review = HumanOutputReview.objects.filter(
+                    agent_trace__execution_version=h.execution_version, 
+                    agent_trace__agent=agent
+                ).first()
+                
+                if human_review and human_review.score is not None:
+                    if human_review.score < HUMAN_REVIEW_VETO_THRESHOLD:
+                        vetoed = True
+                        break
+                    else:
+                        total_weighted_score += (h.overall_score * AUTO_EVALUATION_WEIGHT) + (human_review.score * HUMAN_REVIEW_WEIGHT)
+                else:
+                    total_weighted_score += h.overall_score
+
+            if vetoed:
+                exp.status = "failed"
+                exp.failure_reason = "Human review veto"
+                exp.save()
+                continue
+
+            exp.post_change_score = total_weighted_score / recent_histories.count()
             exp.delta = exp.post_change_score - exp.baseline_score
             
             # After 5 runs, lock in success or failure
@@ -249,6 +279,7 @@ def run_post_agent_evaluation(agent_trace):
                     exp.status = "successful"
                 elif exp.delta <= -0.5:
                     exp.status = "failed"
+                    exp.failure_reason = "Score delta dropped below threshold"
                     # We do not automatically rollback, but flag it as failed
         exp.save()
 

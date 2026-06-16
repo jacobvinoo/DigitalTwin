@@ -5,7 +5,7 @@ from strategy.views import (
     PromptTemplateViewSet, AgentPromptAssignmentViewSet, PromptPackViewSet, PromptVersionMetricsViewSet,
     EvaluationTemplateViewSet, EvaluationPackViewSet, EvaluationAssignmentViewSet, EvaluationRunViewSet, AgentEvaluationHistoryViewSet,
     ManualSourceViewSet, AgentImprovementRecommendationViewSet,
-    AgentImprovementExperimentViewSet, HumanOutputReviewViewSet
+    AgentImprovementExperimentViewSet, HumanOutputReviewViewSet, ChainExecutionVersionViewSet
 )
 from strategy.agent_views import AgentDefinitionViewSet, AgentEdgeViewSet, create_topic_agent, create_topic_edge, get_agent_graph
 
@@ -34,6 +34,7 @@ router.register(r'recommendations', AgentImprovementRecommendationViewSet, basen
 router.register(r'experiments', AgentImprovementExperimentViewSet, basename='experiment')
 router.register(r'human-reviews', HumanOutputReviewViewSet, basename='humanreview')
 router.register(r'manual-sources', ManualSourceViewSet, basename='manualsource')
+router.register(r'chain-versions', ChainExecutionVersionViewSet, basename='chainversion')
 
 urlpatterns = [
     path('', include(router.urls)),

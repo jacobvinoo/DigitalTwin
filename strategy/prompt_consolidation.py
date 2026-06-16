@@ -2,7 +2,7 @@ import json
 from .models import AgentPromptAssignment, PromptTemplate, PromptTemplateVersion
 from .chain_engine import get_llm_client
 
-def consolidate_agent_prompts(agent):
+def consolidate_agent_prompts(agent, user=None):
     """
     Detects if an agent has too many active improvement rules.
     If it has >= 10, it calls the LLM to consolidate them into a single new rule
@@ -59,7 +59,8 @@ def consolidate_agent_prompts(agent):
         category="improvement_rule",
         description=f"Automatically consolidated {len(rules)} previous rules to reduce prompt bloat.",
         prompt_body=consolidated_text,
-        version=1
+        version=1,
+        created_by=user
     )
     PromptTemplateVersion.objects.create(
         prompt_template=new_template,

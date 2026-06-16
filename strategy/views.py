@@ -429,6 +429,71 @@ class TopicViewSet(viewsets.ModelViewSet):
             
         return Response({"error": "Document not found"}, status=status.HTTP_404_NOT_FOUND)
 
+    @action(detail=True, methods=["post"], url_path="execute-chain")
+    def execute_chain(self, request, pk=None):
+        topic = self.get_object()
+        from strategy.chain_engine import AgentChainExecutor
+        executor = AgentChainExecutor()
+        trigger_input = request.data.get("trigger_input", {})
+        
+        import threading
+        from django.db import connection
+        
+        def run_it():
+            try:
+                executor.execute(topic=topic, user=request.user, trigger_input=trigger_input)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Chain execution error: {str(e)}")
+            finally:
+                connection.close()
+
+        # Validate graph before starting thread so we can return 400 immediately if invalid
+        from strategy.chain_engine import AgentChainValidator
+        validator = AgentChainValidator(topic)
+        is_valid, errors = validator.validate()
+        if not is_valid:
+            return Response({"error": f"Invalid graph: {errors}"}, status=400)
+                
+        threading.Thread(target=run_it).start()
+        
+        return Response({"status": "started"})
+
+    @action(detail=True, methods=["get"], url_path="chain-versions")
+    def chain_versions(self, request, pk=None):
+        topic = self.get_object()
+        from strategy.models import ChainExecutionVersion
+        versions = ChainExecutionVersion.objects.filter(topic=topic).order_by("-version_number")
+        data = [
+            {
+                "id": v.id,
+                "version_number": v.version_number,
+                "status": v.status,
+                "started_at": v.started_at,
+                "completed_at": v.completed_at
+            } for v in versions
+        ]
+        return Response(data)
+
+    @action(detail=True, methods=["get"], url_path="agent-artifacts")
+    def agent_artifacts(self, request, pk=None):
+        topic = self.get_object()
+        from strategy.models import AgentArtifact
+        artifacts = AgentArtifact.objects.filter(execution_version__topic=topic).order_by("-id")
+        data = [
+            {
+                "id": a.id,
+                "execution_version_id": a.execution_version.id,
+                "execution_version_number": a.execution_version.version_number,
+                "agent_name": a.agent_trace.agent.name,
+                "artifact_type": a.artifact_type,
+                "title": a.title,
+                "content": a.content,
+                "payload": a.payload,
+            } for a in artifacts
+        ]
+        return Response(data)
 
 class TaskViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.CreateModelMixin, mixins.DestroyModelMixin, viewsets.GenericViewSet):
     serializer_class = TaskLedgerEntrySerializer
@@ -1105,6 +1170,7 @@ class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
                 prompt_body=template.prompt_body,
                 changelog=f"Improvement from Agent Evaluation: {recommendation.issue_type}"
             )
+            assignment_to_apply = existing_assignment
         else:
             # 1. Create a new PromptTemplate
             template = PromptTemplate.objects.create(
@@ -1124,18 +1190,34 @@ class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
                 target_agents = list(AgentDefinition.objects.filter(topic=agent.topic))
             
             # 2. Assign it to the target agents
+            first_assignment = None
             for target_agent in target_agents:
-                AgentPromptAssignment.objects.create(
+                assignment = AgentPromptAssignment.objects.create(
                     agent=target_agent,
                     prompt_template=template,
                     sort_order=800, # Evaluation-derived improvements
                     enabled=True,
                     required=True
                 )
+                if target_agent == agent:
+                    first_assignment = assignment
+            assignment_to_apply = first_assignment or assignment
             
+        recommendation.applied_assignment = assignment_to_apply
         recommendation.status = "applied"
         recommendation.save()
         
+        # Consolidation check
+        active_improvement_count = AgentPromptAssignment.objects.filter(
+            agent=agent,
+            prompt_template__category="improvement_rule",
+            enabled=True,
+        ).count()
+        if active_improvement_count >= 10:
+            from strategy.tasks import consolidate_agent_prompts_task
+            consolidate_agent_prompts_task.delay(agent.id, request.user.id)
+            
+
         # Create an Experiment to measure impact
         from strategy.models import AgentEvaluationHistory, AgentImprovementExperiment
         recent_histories = AgentEvaluationHistory.objects.filter(agent=agent).order_by('-created_at')[:10]
@@ -1174,16 +1256,19 @@ class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
         
         from strategy.models import AgentPromptAssignment, AgentImprovementExperiment
         
-        # We find all assignments matching the template created by this recommendation
-        assignments = AgentPromptAssignment.objects.filter(
-            agent__topic__owner=request.user,
-            prompt_template__category="improvement_rule",
-            prompt_template__name=template_name
-        )
-        
-        for assignment in assignments:
-            assignment.enabled = False
-            assignment.save()
+        if recommendation.applied_assignment:
+            recommendation.applied_assignment.enabled = False
+            recommendation.applied_assignment.save()
+        else:
+            # Fallback for older recommendations
+            assignments = AgentPromptAssignment.objects.filter(
+                agent__topic__owner=request.user,
+                prompt_template__category="improvement_rule",
+                prompt_template__name=template_name
+            )
+            for assignment in assignments:
+                assignment.enabled = False
+                assignment.save()
             
         # Update experiment status if one exists
         experiment = AgentImprovementExperiment.objects.filter(recommendation=recommendation).first()
@@ -1248,4 +1333,65 @@ class AgentImprovementExperimentViewSet(viewsets.ModelViewSet):
             "average_score_impact": round(avg_impact, 2),
             "top_recurring_weaknesses": weaknesses_data
         })
+
+class ChainExecutionVersionViewSet(viewsets.ViewSet):
+    def retrieve(self, request, pk=None):
+        from strategy.models import ChainExecutionVersion
+        try:
+            version = ChainExecutionVersion.objects.get(pk=pk)
+            return Response({
+                "id": version.id,
+                "version_number": version.version_number,
+                "status": version.status,
+                "started_at": version.started_at,
+                "completed_at": version.completed_at
+            })
+        except ChainExecutionVersion.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+    @action(detail=True, methods=["get"], url_path="trace")
+    def trace(self, request, pk=None):
+        from strategy.models import AgentRunTrace
+        traces = AgentRunTrace.objects.filter(execution_version_id=pk).order_by("run_order")
+        data = [
+            {
+                "id": t.id,
+                "agent_id": t.agent_id,
+                "agent_name": t.agent.name,
+                "run_order": t.run_order,
+                "status": t.status,
+                "input_payload": t.input_payload or t.mapped_input_payload,
+                "mapped_input_payload": t.mapped_input_payload,
+                "output_payload": t.output_payload,
+                "prompt_snapshot": t.prompt_snapshot,
+                "prompt_traces": [
+                    {
+                        "template_name": pt.prompt_template.name,
+                        "version": pt.version_number,
+                        "snapshot": pt.prompt_snapshot
+                    } for pt in t.prompt_traces.all().order_by('execution_order')
+                ],
+                "evaluations": [
+                    {
+                        "evaluator": ev.evaluation_template.name,
+                        "score": ev.score,
+                        "passed": ev.passed,
+                        "feedback": ev.feedback
+                    } for ev in t.evaluations.all()
+                ],
+                "started_at": t.started_at,
+                "completed_at": t.completed_at,
+                "active_experiments": [exp.id for exp in t.active_experiments.all()]
+            } for t in traces
+        ]
+        return Response(data)
+
+    @action(detail=True, methods=["get"], url_path="graph-state")
+    def graph_state(self, request, pk=None):
+        from strategy.models import ChainExecutionVersion
+        try:
+            version = ChainExecutionVersion.objects.get(pk=pk)
+            return Response(version.graph_snapshot)
+        except ChainExecutionVersion.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
 

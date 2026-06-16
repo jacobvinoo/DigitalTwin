@@ -147,9 +147,8 @@ def test_agent_run_real_llm_execution(mock_execute, api_client, user, topic):
     
     # The second call should be the evaluator call.
     # We assert that schema_class is passed as EvaluationResultSchema
-    from strategy.agent_views import EvaluationResultSchema
     eval_call_kwargs = mock_execute.call_args_list[1].kwargs
-    assert eval_call_kwargs.get("schema_class") == EvaluationResultSchema
+    assert eval_call_kwargs.get("schema_class").__name__ == "EvaluationResultSchema"
     assert "Rubric/Instructions:\nIs it good?" in eval_call_kwargs.get("prompt")
     assert trace["prompt_traces"][0]["template_name"] == "Helper Prompt"
     assert trace["prompt_traces"][1]["template_name"] == "System Instructions"
@@ -164,3 +163,38 @@ def test_agent_run_real_llm_execution(mock_execute, api_client, user, topic):
     
     # Check that LLMClient was called exactly twice
     assert mock_execute.call_count == 2
+
+@patch('threading.Thread.start')
+@patch('strategy.chain_engine.AgentChainExecutor.execute')
+def test_execute_chain_endpoint_success(mock_execute, mock_thread_start, api_client, user, topic):
+    api_client.force_authenticate(user=user)
+    
+    # Needs valid graph, meaning exactly one entrypoint
+    AgentDefinition.objects.create(topic=topic, name="A1", system_prompt="s", output_schema={}, is_entrypoint=True)
+    
+    # We mock the thread's target function execution to ensure it works
+    # We just want to test that the endpoint returns 200 and spawns the thread
+    def side_effect(*args, **kwargs):
+        # execute the thread target synchronously in the test
+        kwargs = mock_thread_start.call_args[1] if mock_thread_start.call_args else {}
+        pass # We don't actually run it to avoid DB thread issues in tests
+    mock_thread_start.side_effect = side_effect
+    
+    response = api_client.post(f'/api/topics/{topic.id}/execute-chain/', {
+        "trigger_input": {"trigger": "manual"}
+    }, format="json")
+    
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["status"] == "started"
+    mock_thread_start.assert_called_once()
+
+def test_execute_chain_endpoint_invalid_graph(api_client, user, topic):
+    api_client.force_authenticate(user=user)
+    
+    # Empty graph, should fail validation (no entrypoint)
+    response = api_client.post(f'/api/topics/{topic.id}/execute-chain/', {
+        "trigger_input": {"trigger": "manual"}
+    }, format="json")
+    
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Invalid graph" in response.data["error"]

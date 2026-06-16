@@ -304,6 +304,12 @@ class AgentDefinitionViewSet(viewsets.ModelViewSet):
                 telemetry=gen_result.telemetry
             )
             
+            # Attach active experiments
+            from strategy.models import AgentImprovementExperiment
+            active_experiments = AgentImprovementExperiment.objects.filter(agent=agent, status="monitoring")
+            if active_experiments.exists():
+                run_trace.active_experiments.set(active_experiments)
+                
             # Save AgentArtifact
             artifact = AgentArtifact.objects.create(
                 execution_version=execution_version,

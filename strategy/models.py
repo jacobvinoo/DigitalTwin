@@ -600,6 +600,7 @@ class AgentRunTrace(models.Model):
     output_payload = models.JSONField(default=dict)
     validation_result = models.JSONField(default=dict)
     telemetry = models.JSONField(default=dict)
+    active_experiments = models.ManyToManyField('AgentImprovementExperiment', blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
@@ -854,6 +855,7 @@ class AgentImprovementRecommendation(models.Model):
     agent = models.ForeignKey(AgentDefinition, on_delete=models.CASCADE)
     execution_version = models.ForeignKey(ChainExecutionVersion, on_delete=models.CASCADE)
     agent_trace = models.ForeignKey(AgentRunTrace, on_delete=models.CASCADE)
+    applied_assignment = models.ForeignKey('AgentPromptAssignment', null=True, blank=True, on_delete=models.SET_NULL)
 
     issue_type = models.CharField(max_length=100)
     source_evaluation = models.CharField(max_length=255)
@@ -919,6 +921,7 @@ class AgentImprovementExperiment(models.Model):
     )
 
     runs_observed = models.IntegerField(default=0)
+    failure_reason = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class HumanOutputReview(models.Model):
@@ -935,4 +938,5 @@ class HumanOutputReview(models.Model):
     )
     edited_sections = models.JSONField(default=dict, blank=True)
     feedback_reason = models.TextField(blank=True)
+    score = models.IntegerField(null=True, blank=True, help_text="Human score out of 10")
     created_at = models.DateTimeField(auto_now_add=True)
