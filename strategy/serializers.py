@@ -233,3 +233,16 @@ class AgentImprovementRecommendationSerializer(serializers.ModelSerializer):
         from strategy.models import AgentImprovementRecommendation
         model = AgentImprovementRecommendation
         fields = "__all__"
+
+class AgentImprovementExperimentSerializer(serializers.ModelSerializer):
+    class Meta:
+        from strategy.models import AgentImprovementExperiment
+        model = AgentImprovementExperiment
+        fields = "__all__"
+
+class HumanOutputReviewSerializer(serializers.ModelSerializer):
+    class Meta:
+        from strategy.models import HumanOutputReview
+        model = HumanOutputReview
+        fields = "__all__"
+        read_only_fields = ["reviewer"]

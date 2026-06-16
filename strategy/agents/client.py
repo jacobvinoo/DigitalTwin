@@ -114,6 +114,13 @@ class LLMClient:
             else:
                 raw_schema = schema_dict
                 schema_name = "DynamicSchema"
+                
+            if not isinstance(raw_schema, dict):
+                raise ValueError("Provided schema must be a valid JSON schema dictionary.")
+            if raw_schema.get("type") != "object":
+                raise ValueError(f"Invalid schema for response_format '{schema_name}': The root schema must have 'type': 'object'.")
+            if "properties" not in raw_schema:
+                raise ValueError(f"Invalid schema for response_format '{schema_name}': The root schema must define 'properties'.")
             
             def make_strict_schema(schema: Any) -> Any:
                 if isinstance(schema, dict):
@@ -191,7 +198,7 @@ class FakeLLMClient(LLMClient):
         self.response_json = response_json
         self.simulate_timeout = simulate_timeout
 
-    def _call_provider(self, prompt: str, model: str, schema_class=None):
+    def _call_provider(self, prompt: str, model: str, schema_class=None, schema_dict=None):
         if self.simulate_timeout:
             raise TimeoutError("Simulated timeout")
             

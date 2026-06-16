@@ -1,13 +1,21 @@
 import React from 'react';
 import { Handle, Position } from '@xyflow/react';
-import { Bot, Play, TrendingUp, TrendingDown, Activity, CheckCircle, Edit3 } from 'lucide-react';
+import { Bot, Play, TrendingUp, TrendingDown, Activity, CheckCircle, Edit3, Loader2 } from 'lucide-react';
 
 const AgentNode = ({ data, selected }) => {
   return (
-    <div className={`bg-white rounded-lg border-2 shadow-sm min-w-[200px] ${selected ? 'border-blue-500 shadow-md' : 'border-gray-200'}`}>
-      <div className="p-3 border-b border-gray-100 flex items-center justify-between bg-gray-50 rounded-t-lg">
+    <div className={`bg-white rounded-lg border-2 shadow-sm min-w-[200px] transition-all duration-300 ${selected ? 'border-blue-500 shadow-md' : data.isRunning ? 'border-indigo-500 ring-4 ring-indigo-100 shadow-md' : data.isComplete ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200'}`}>
+      <div className={`p-3 border-b border-gray-100 flex items-center justify-between rounded-t-lg ${data.isComplete ? 'bg-emerald-100/50' : 'bg-gray-50'}`}>
         <div className="flex items-center gap-2">
-          {data.isEntrypoint ? <Play size={16} className="text-green-600" /> : <Bot size={16} className="text-blue-600" />}
+          {data.isRunning ? (
+            <Loader2 size={16} className="text-indigo-600 animate-spin" />
+          ) : data.isComplete ? (
+            <CheckCircle size={16} className="text-emerald-600" />
+          ) : data.isEntrypoint ? (
+            <Play size={16} className="text-green-600" />
+          ) : (
+            <Bot size={16} className="text-blue-600" />
+          )}
           <span className="font-semibold text-gray-800 text-sm">{data.name}</span>
         </div>
         <span className="text-xs px-2 py-1 bg-gray-200 text-gray-700 rounded-full">

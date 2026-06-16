@@ -14,7 +14,9 @@ class EvaluationResultSchema(BaseModel):
     feedback: str = Field(..., description="Brief feedback explaining the score")
 
 class ImprovementRecommendationSchema(BaseModel):
-    recommendation: str = Field(..., description="Concrete, actionable rule to append to the system prompt.")
+    root_cause_diagnosis: str = Field(..., description="The detected root cause underlying the low score (e.g. 'no sources retrieved', 'weak source diversity')")
+    recommendation: str = Field(..., description="Actionable fix recommendation (e.g. 'add Source Recording prompt', 'require Evidence Table output schema')")
+    target_area: str = Field(..., description="One of: 'prompt', 'memory', 'rag_sources', 'output_schema', 'tooling', 'workflow', 'human_instruction'")
 
 def run_post_agent_evaluation(agent_trace):
     """
@@ -49,10 +51,11 @@ def run_post_agent_evaluation(agent_trace):
         
         try:
             if et.scoring_schema:
+                schema_to_pass = et.scoring_schema.get('output_schema') if 'output_schema' in et.scoring_schema else et.scoring_schema
                 eval_res = llm.execute(
                     prompt=eval_prompt,
                     prompt_version=str(et.version),
-                    schema_dict=et.scoring_schema,
+                    schema_dict=schema_to_pass,
                     model="gpt-4o"
                 )
             else:
@@ -164,22 +167,54 @@ def run_post_agent_evaluation(agent_trace):
     # Generate Improvement Recommendations
     low_evals = [e for e in evaluations if e.get("score", 0) < 7]
     for low in low_evals:
-        cat = low.get("category", "")
+        cat = str(low.get("category", "")).lower()
+        score_val = low.get("score", 0)
+        
+        # Calculate recurrence count
+        recent_histories = AgentEvaluationHistory.objects.filter(agent=agent).order_by('-created_at')[:20]
+        recurring_count = 1
+        for h in recent_histories:
+            if cat == "evidence" and h.evidence_score > 0 and h.evidence_score < 7: recurring_count += 1
+            elif (cat == "safety" or cat == "hallucination") and h.hallucination_score > 0 and h.hallucination_score < 7: recurring_count += 1
+            elif cat == "executive" and h.executive_score > 0 and h.executive_score < 7: recurring_count += 1
+            elif cat == "quality" and h.quality_score > 0 and h.quality_score < 7: recurring_count += 1
+
+        severity = max(0, 7 - score_val)
+        confidence_score = min(10.0, (recurring_count * 0.5) + severity)
+
         if cat == "evidence":
-            rec_text = "Add Source Recording + Evidence Extraction prompt pack"
+            root_cause = "- no sources retrieved\n- weak source diversity\n- claims not mapped to evidence"
+            rec_text = "- add Source Recording prompt\n- require Evidence Table output schema\n- add minimum source threshold"
+            target = "rag_sources"
         elif cat == "safety" or cat == "hallucination":
-            rec_text = "Add Hallucination Avoidance + Fact Validation"
+            root_cause = "- unsupported claims\n- facts hallucinated outside of RAG context"
+            rec_text = "- add Hallucination Avoidance prompt\n- require Fact Validation step"
+            target = "prompt"
         elif cat == "executive":
-            rec_text = "Add Decision Framing + Executive Summary"
+            root_cause = "- response lacks top-down clarity\n- too in the weeds"
+            rec_text = "- add Decision Framing prompt\n- require Executive Summary output schema"
+            target = "output_schema"
         elif cat == "quality":
-            rec_text = "Add Structured Document Writer"
+            root_cause = "- poor formatting and structure"
+            rec_text = "- add Structured Document Writer prompt"
+            target = "prompt"
         else:
             try:
-                imp_prompt = f"The agent {agent.name} received a low score ({low.get('score')}) for {low.get('evaluator')}. Output JSON: {json.dumps(low.get('rich_output', {}))}. Please provide a concrete recommendation to append to the agent's system prompt to fix this issue."
+                imp_prompt = f"The agent {agent.name} received a low score ({score_val}) for {low.get('evaluator')}. Feedback: {low.get('feedback')}. Please diagnose the root cause and provide a specific recommendation."
                 imp_res = llm.execute(prompt=imp_prompt, prompt_version="1.0", schema_class=ImprovementRecommendationSchema, model="gpt-4o-mini")
-                rec_text = imp_res.data.recommendation if not isinstance(imp_res.data, dict) else imp_res.data.get("recommendation", "")
+                
+                if isinstance(imp_res.data, dict):
+                    root_cause = imp_res.data.get("root_cause_diagnosis", "Unknown root cause")
+                    rec_text = imp_res.data.get("recommendation", f"Address: {low.get('feedback')}")
+                    target = imp_res.data.get("target_area", "prompt")
+                else:
+                    root_cause = imp_res.data.root_cause_diagnosis
+                    rec_text = imp_res.data.recommendation
+                    target = imp_res.data.target_area
             except Exception:
+                root_cause = "Unknown root cause"
                 rec_text = f"Improve system prompt to address: {low.get('feedback')}"
+                target = "prompt"
             
         AgentImprovementRecommendation.objects.create(
             agent=agent,
@@ -187,10 +222,34 @@ def run_post_agent_evaluation(agent_trace):
             agent_trace=agent_trace,
             issue_type=low.get("evaluator", "General"),
             source_evaluation=str(low),
+            root_cause_diagnosis=root_cause,
             problem=low.get("feedback", "No feedback"),
             recommended_change=rec_text,
-            target_area="prompt",
+            target_area=target,
+            confidence_score=confidence_score,
+            recurring_count=recurring_count,
             status="proposed"
         )
+        
+    # Update running experiments
+    from .models import AgentImprovementExperiment
+    active_experiments = AgentImprovementExperiment.objects.filter(agent=agent, status="monitoring")
+    for exp in active_experiments:
+        exp.runs_observed += 1
+        
+        # Calculate new moving average
+        recent_histories = AgentEvaluationHistory.objects.filter(agent=agent).order_by('-created_at')[:exp.runs_observed]
+        if recent_histories.exists():
+            exp.post_change_score = sum(h.overall_score for h in recent_histories) / recent_histories.count()
+            exp.delta = exp.post_change_score - exp.baseline_score
+            
+            # After 5 runs, lock in success or failure
+            if exp.runs_observed >= 5:
+                if exp.delta >= 0.5:
+                    exp.status = "successful"
+                elif exp.delta <= -0.5:
+                    exp.status = "failed"
+                    # We do not automatically rollback, but flag it as failed
+        exp.save()
 
     return evaluations

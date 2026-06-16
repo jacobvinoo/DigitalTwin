@@ -131,5 +131,6 @@ EVALUATION_CATEGORY_WEIGHTS = {
     "quality": 0.25,
     "evidence": 0.30,
     "executive": 0.20,
-    "hallucination": 0.25
+    "hallucination": 0.25,
+    "safety": 0.25
 }

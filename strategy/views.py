@@ -972,10 +972,23 @@ class AgentPromptAssignmentViewSet(viewsets.ModelViewSet):
 class PromptPackViewSet(viewsets.ModelViewSet):
     queryset = PromptPack.objects.all()
     serializer_class = PromptPackSerializer
+    
+    def get_queryset(self):
+        from django.db.models import Q
+        return PromptPack.objects.filter(
+            Q(created_by__isnull=True) | Q(created_by=self.request.user)
+        )
 
 class PromptVersionMetricsViewSet(viewsets.ModelViewSet):
     queryset = PromptVersionMetrics.objects.all()
     serializer_class = PromptVersionMetricsSerializer
+    
+    def get_queryset(self):
+        from django.db.models import Q
+        return PromptVersionMetrics.objects.filter(
+            Q(prompt_version__prompt_template__created_by__isnull=True) | 
+            Q(prompt_version__prompt_template__created_by=self.request.user)
+        )
 
 # ----------------------------------------------------------------------------
 # Evaluation Library ViewSets
@@ -984,10 +997,22 @@ class PromptVersionMetricsViewSet(viewsets.ModelViewSet):
 class EvaluationTemplateViewSet(viewsets.ModelViewSet):
     queryset = EvaluationTemplate.objects.all().order_by('-id')
     serializer_class = EvaluationTemplateSerializer
+    
+    def get_queryset(self):
+        from django.db.models import Q
+        return EvaluationTemplate.objects.filter(
+            Q(created_by__isnull=True) | Q(created_by=self.request.user)
+        ).order_by('-id')
 
 class EvaluationPackViewSet(viewsets.ModelViewSet):
     queryset = EvaluationPack.objects.all()
     serializer_class = EvaluationPackSerializer
+    
+    def get_queryset(self):
+        from django.db.models import Q
+        return EvaluationPack.objects.filter(
+            Q(created_by__isnull=True) | Q(created_by=self.request.user)
+        )
 
 class EvaluationAssignmentViewSet(viewsets.ModelViewSet):
     queryset = EvaluationAssignment.objects.all().order_by('sort_order')
@@ -1052,7 +1077,9 @@ class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
         agent = recommendation.agent
         
         # Apply the recommendation by updating or creating a new PromptTemplate assignment
-        from strategy.models import PromptTemplate, AgentPromptAssignment
+        apply_to = request.data.get("apply_to", "agent")
+        
+        from strategy.models import PromptTemplate, AgentPromptAssignment, AgentDefinition
         
         template_name = f"Improvement Rule: {recommendation.issue_type}"
         
@@ -1089,17 +1116,40 @@ class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
                 created_by=request.user
             )
             
-            # 2. Assign it to the agent
-            AgentPromptAssignment.objects.create(
-                agent=agent,
-                prompt_template=template,
-                sort_order=800, # Evaluation-derived improvements
-                enabled=True,
-                required=True
-            )
+            # Determine target agents based on apply_to scope
+            target_agents = [agent]
+            if apply_to == "role":
+                target_agents = list(AgentDefinition.objects.filter(role=agent.role, topic__owner=request.user))
+            elif apply_to == "workspace":
+                target_agents = list(AgentDefinition.objects.filter(topic=agent.topic))
+            
+            # 2. Assign it to the target agents
+            for target_agent in target_agents:
+                AgentPromptAssignment.objects.create(
+                    agent=target_agent,
+                    prompt_template=template,
+                    sort_order=800, # Evaluation-derived improvements
+                    enabled=True,
+                    required=True
+                )
             
         recommendation.status = "applied"
         recommendation.save()
+        
+        # Create an Experiment to measure impact
+        from strategy.models import AgentEvaluationHistory, AgentImprovementExperiment
+        recent_histories = AgentEvaluationHistory.objects.filter(agent=agent).order_by('-created_at')[:10]
+        if recent_histories.exists():
+            baseline_score = sum(h.overall_score for h in recent_histories) / recent_histories.count()
+        else:
+            baseline_score = 0.0
+            
+        AgentImprovementExperiment.objects.create(
+            recommendation=recommendation,
+            agent=agent,
+            baseline_score=baseline_score,
+            status="monitoring"
+        )
         
         return Response({"status": "applied", "agent_name": agent.name})
 
@@ -1112,4 +1162,90 @@ class AgentImprovementRecommendationViewSet(viewsets.ModelViewSet):
         recommendation.status = "rejected"
         recommendation.save()
         return Response({"status": "rejected", "agent_name": recommendation.agent.name})
+        
+    @action(detail=True, methods=['post'])
+    def rollback(self, request, pk=None):
+        recommendation = self.get_object()
+        if recommendation.status not in ["applied", "monitoring", "failed"]:
+            return Response({"error": "Only applied recommendations can be rolled back."}, status=400)
+            
+        agent = recommendation.agent
+        template_name = f"Improvement Rule: {recommendation.issue_type}"
+        
+        from strategy.models import AgentPromptAssignment, AgentImprovementExperiment
+        
+        # We find all assignments matching the template created by this recommendation
+        assignments = AgentPromptAssignment.objects.filter(
+            agent__topic__owner=request.user,
+            prompt_template__category="improvement_rule",
+            prompt_template__name=template_name
+        )
+        
+        for assignment in assignments:
+            assignment.enabled = False
+            assignment.save()
+            
+        # Update experiment status if one exists
+        experiment = AgentImprovementExperiment.objects.filter(recommendation=recommendation).first()
+        if experiment:
+            experiment.status = "rolled_back"
+            experiment.save()
+            
+        recommendation.status = "rolled_back"
+        recommendation.save()
+        
+        return Response({"status": "rolled_back", "agent_name": agent.name})
+
+class HumanOutputReviewViewSet(viewsets.ModelViewSet):
+    from strategy.models import HumanOutputReview
+    from strategy.serializers import HumanOutputReviewSerializer
+    serializer_class = HumanOutputReviewSerializer
+
+    def get_queryset(self):
+        from strategy.models import HumanOutputReview
+        return HumanOutputReview.objects.filter(reviewer=self.request.user).order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(reviewer=self.request.user)
+
+class AgentImprovementExperimentViewSet(viewsets.ModelViewSet):
+    from strategy.models import AgentImprovementExperiment
+    from strategy.serializers import AgentImprovementExperimentSerializer
+    serializer_class = AgentImprovementExperimentSerializer
+
+    def get_queryset(self):
+        from strategy.models import AgentImprovementExperiment
+        return AgentImprovementExperiment.objects.filter(agent__topic__owner=self.request.user).order_by('-created_at')
+
+    @action(detail=False, methods=['get'])
+    def dashboard_stats(self, request):
+        from strategy.models import AgentImprovementExperiment, AgentImprovementRecommendation
+        from django.db.models import Avg, Count
+        
+        user = request.user
+        experiments = AgentImprovementExperiment.objects.filter(agent__topic__owner=user)
+        
+        total_applied = experiments.count()
+        successful = experiments.filter(status="successful").count()
+        failed = experiments.filter(status="failed").count()
+        
+        avg_impact = experiments.aggregate(Avg('delta'))['delta__avg'] or 0.0
+        
+        # Find recurring weaknesses (high recurring count)
+        recurring_weaknesses = AgentImprovementRecommendation.objects.filter(
+            agent__topic__owner=user
+        ).order_by('-recurring_count')[:5]
+        
+        weaknesses_data = [
+            {"issue": r.issue_type, "count": r.recurring_count, "agent": r.agent.name}
+            for r in recurring_weaknesses
+        ]
+        
+        return Response({
+            "total_improvements_applied": total_applied,
+            "successful_improvements": successful,
+            "failed_improvements": failed,
+            "average_score_impact": round(avg_impact, 2),
+            "top_recurring_weaknesses": weaknesses_data
+        })
 

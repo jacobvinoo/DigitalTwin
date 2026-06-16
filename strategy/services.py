@@ -105,7 +105,8 @@ def create_strategy_topic(
 
     # Dynamically generate tasks via LLM based on the topic details
     import os
-    if os.environ.get("PYTEST_CURRENT_TEST"):
+    import sys
+    if os.environ.get("PYTEST_CURRENT_TEST") or 'test' in sys.argv:
         tasks_to_create = get_default_tasks()
     else:
         from strategy.agents.client import LLMClient

@@ -760,6 +760,12 @@ class PromptPack(models.Model):
     key = models.CharField(max_length=255, unique=True)
     name = models.CharField(max_length=255)
     templates = models.ManyToManyField(PromptTemplate, related_name="packs")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
 
     def __str__(self):
         return self.name
@@ -784,6 +790,12 @@ class EvaluationTemplate(models.Model):
     version = models.IntegerField(default=1)
     scoring_schema = models.JSONField(default=dict)
     score_field = models.CharField(max_length=50, default="score", help_text="The JSON key in the output schema containing the numeric score")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -793,6 +805,12 @@ class EvaluationPack(models.Model):
     key = models.CharField(max_length=255, unique=True)
     name = models.CharField(max_length=255)
     templates = models.ManyToManyField(EvaluationTemplate, related_name="packs")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
 
     def __str__(self):
         return self.name
@@ -839,8 +857,14 @@ class AgentImprovementRecommendation(models.Model):
 
     issue_type = models.CharField(max_length=100)
     source_evaluation = models.CharField(max_length=255)
-    problem = models.TextField()
-    recommended_change = models.TextField()
+    
+    # Separating diagnosis from the actionable fix
+    root_cause_diagnosis = models.TextField(blank=True, help_text="The detected root cause underlying the low score")
+    problem = models.TextField(help_text="Detailed problem description")
+    recommended_change = models.TextField(help_text="Actionable fix recommendation")
+    
+    confidence_score = models.FloatField(default=0.0, help_text="Computed confidence in this recommendation")
+    recurring_count = models.IntegerField(default=1, help_text="Number of times this issue was observed")
 
     target_area = models.CharField(
         max_length=50,
@@ -851,6 +875,7 @@ class AgentImprovementRecommendation(models.Model):
             ("output_schema", "Output Schema"),
             ("tooling", "Tooling"),
             ("workflow", "Workflow"),
+            ("human_instruction", "Human Instruction Needed"),
         ],
     )
 
@@ -862,6 +887,10 @@ class AgentImprovementRecommendation(models.Model):
             ("accepted", "Accepted"),
             ("rejected", "Rejected"),
             ("applied", "Applied"),
+            ("monitoring", "Monitoring"),
+            ("successful", "Successful"),
+            ("failed", "Failed"),
+            ("rolled_back", "Rolled Back"),
         ],
     )
 
@@ -869,3 +898,41 @@ class AgentImprovementRecommendation(models.Model):
 
     def __str__(self):
         return f"[{self.status}] {self.issue_type} for {self.agent.name}"
+
+class AgentImprovementExperiment(models.Model):
+    recommendation = models.ForeignKey(AgentImprovementRecommendation, on_delete=models.CASCADE)
+    agent = models.ForeignKey(AgentDefinition, on_delete=models.CASCADE)
+
+    baseline_score = models.FloatField()
+    post_change_score = models.FloatField(null=True, blank=True)
+    delta = models.FloatField(null=True, blank=True)
+
+    status = models.CharField(
+        max_length=50,
+        choices=[
+            ("monitoring", "Monitoring"),
+            ("successful", "Successful"),
+            ("failed", "Failed"),
+            ("rolled_back", "Rolled Back"),
+        ],
+        default="monitoring",
+    )
+
+    runs_observed = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class HumanOutputReview(models.Model):
+    agent_trace = models.ForeignKey(AgentRunTrace, on_delete=models.CASCADE)
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    
+    status = models.CharField(
+        max_length=50,
+        choices=[
+            ("accepted_unchanged", "Accepted Unchanged"),
+            ("accepted_with_edits", "Accepted With Edits"),
+            ("rejected", "Rejected"),
+        ]
+    )
+    edited_sections = models.JSONField(default=dict, blank=True)
+    feedback_reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)

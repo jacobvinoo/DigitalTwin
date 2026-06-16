@@ -15,7 +15,7 @@ function App() {
       <Routes>
         <Route path="/" element={<ProjectDashboard />} />
         <Route path="/topics" element={<ProjectDashboard />} />
-        <Route path="/topics/:topicId/chains/new" element={<AgentChainCreateWizard />} />
+        <Route path="/topics/:topicId/chains/new" element={<AgentChainCreateWizard onSubmit={async () => {}} />} />
         <Route path="/prompts" element={<PromptLibraryManager />} />
         <Route path="/evaluations" element={<EvaluationLibraryManager />} />
         <Route 

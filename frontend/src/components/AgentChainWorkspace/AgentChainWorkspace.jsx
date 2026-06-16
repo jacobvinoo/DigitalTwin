@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ReactFlow, Background, Controls, useNodesState, useEdgesState, addEdge as addReactFlowEdge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Settings, Play, CheckCircle, BarChart2, GitBranch, ArrowLeft, Plus } from 'lucide-react';
+import { Settings, Play, CheckCircle, BarChart2, GitBranch, ArrowLeft, Plus, TrendingUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AgentNode from './AgentNode';
 import AgentDetailPanel from './AgentDetailPanel';
 import WorkflowAnalytics from './WorkflowAnalytics';
+import ImprovementDashboard from './ImprovementDashboard';
 import { mapBackendToReactFlow } from '../../utils/agentGraphMapper';
 import { api } from '../../api';
 
@@ -141,6 +142,34 @@ const AgentChainWorkspace = ({ topicId }) => {
     setSelectedTrace(null);
   };
 
+  const handleRunChain = async () => {
+    // Topologically run nodes for visual feedback
+    const sortedNodes = [...nodes]; // Assuming simple sequential array iteration for now
+    
+    for (const node of sortedNodes) {
+      // Set node to running
+      setNodes(nds => nds.map(n => 
+        n.id === node.id ? { ...n, data: { ...n.data, isRunning: true, isComplete: false } } : n
+      ));
+
+      try {
+        await api.post(`/api/agents/${node.id}/run/`);
+      } catch (err) {
+        console.error(`Failed to run agent ${node.id}`, err);
+      }
+
+      // Mark node as complete
+      setNodes(nds => nds.map(n => 
+        n.id === node.id ? { ...n, data: { ...n.data, isRunning: false, isComplete: true } } : n
+      ));
+    }
+    
+    // Reset completion states after 3 seconds
+    setTimeout(() => {
+      setNodes(nds => nds.map(n => ({ ...n, data: { ...n.data, isComplete: false } })));
+    }, 3000);
+  };
+
   const onPaneClick = () => {
     setSelectedNode(null);
     setSelectedTrace(null);
@@ -185,7 +214,9 @@ const AgentChainWorkspace = ({ topicId }) => {
           >
             <Plus size={16} /> Add Node
           </button>
-          <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors">
+          <button 
+            onClick={handleRunChain}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors">
             <Play size={16} /> Run Chain
           </button>
           
@@ -202,6 +233,12 @@ const AgentChainWorkspace = ({ topicId }) => {
               className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${viewMode === 'analytics' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
             >
               <BarChart2 size={16} className={viewMode === 'analytics' ? 'text-indigo-600' : 'text-gray-400'} /> Analytics Dashboard
+            </button>
+            <button 
+              onClick={() => setViewMode('improvements')}
+              className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${viewMode === 'improvements' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
+            >
+              <TrendingUp size={16} className={viewMode === 'improvements' ? 'text-indigo-600' : 'text-gray-400'} /> Improvements
             </button>
           </div>
         </div>
@@ -229,8 +266,10 @@ const AgentChainWorkspace = ({ topicId }) => {
             <Controls />
           </ReactFlow>
         </div>
-      ) : (
+      ) : viewMode === 'analytics' ? (
         <WorkflowAnalytics topicId={topicId} />
+      ) : (
+        <ImprovementDashboard topicId={topicId} />
       )}
 
       {(selectedNode || selectedTrace) && (

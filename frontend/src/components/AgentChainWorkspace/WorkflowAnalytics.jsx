@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, CheckCircle, Clock, TrendingUp, TrendingDown, AlertTriangle, ShieldAlert, BarChart2 } from 'lucide-react';
-import api from '../../api';
+import { api } from '../../api';
 
 export default function WorkflowAnalytics({ topicId }) {
   const [data, setData] = useState({ metrics: [], recommendations: [] });
@@ -16,9 +16,9 @@ export default function WorkflowAnalytics({ topicId }) {
       .catch(console.error);
   }, [topicId]);
 
-  const handleAccept = async (id) => {
+  const handleAccept = async (id, applyTo = "agent") => {
     try {
-      await api.post(`/api/recommendations/${id}/accept/`);
+      await api.post(`/api/recommendations/${id}/accept/`, { apply_to: applyTo });
       setData(prev => ({
         ...prev,
         recommendations: prev.recommendations.filter(r => r.id !== id)
@@ -155,30 +155,76 @@ export default function WorkflowAnalytics({ topicId }) {
           <div className="space-y-4">
             <h3 className="text-lg font-semibold text-slate-800">Improvement Recommendations</h3>
             {data.recommendations.map(rec => (
-              <div key={rec.id} className="bg-amber-50 border border-amber-200 rounded-xl p-5 flex items-start gap-4">
-                <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={24} />
-                <div className="flex-1">
-                  <h4 className="text-amber-900 font-bold mb-1">Low Score Detected: {rec.agent__name}</h4>
-                  <p className="text-amber-800 text-sm mb-2">
-                    <strong>Evaluator Feedback ({rec.issue_type}):</strong> {rec.problem}
-                  </p>
-                  <div className="bg-white p-3 rounded border border-amber-100 text-sm text-slate-700 font-mono">
-                    <strong>Suggested Fix:</strong> {rec.recommended_change}
-                  </div>
-                  <div className="mt-4 flex gap-2">
-                    <button onClick={() => handleAccept(rec.id)} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
-                      Apply Fix
-                    </button>
-                    <button onClick={() => handleReject(rec.id)} className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors">
-                      Reject
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <RecommendationCard 
+                key={rec.id} 
+                rec={rec} 
+                onAccept={handleAccept} 
+                onReject={handleReject} 
+              />
             ))}
           </div>
         )}
 
+      </div>
+    </div>
+  );
+}
+
+function RecommendationCard({ rec, onAccept, onReject }) {
+  const [applyTo, setApplyTo] = useState("agent");
+
+  return (
+    <div className="bg-white border border-amber-200 rounded-xl p-5 flex items-start gap-4 shadow-sm">
+      <AlertTriangle className="text-amber-500 shrink-0 mt-1" size={28} />
+      <div className="flex-1 space-y-3">
+        <div className="flex items-center justify-between">
+          <h4 className="text-slate-900 font-bold text-lg">Target: {rec.agent__name}</h4>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-semibold bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full uppercase tracking-wide">
+              {rec.target_area ? rec.target_area.replace('_', ' ') : 'Prompt'}
+            </span>
+            <span className={`text-xs font-semibold px-2 py-1 rounded-full ${rec.confidence_score >= 7 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+              Confidence: {rec.confidence_score ? rec.confidence_score.toFixed(1) : '5.0'}/10
+            </span>
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-2 gap-4">
+          <div className="bg-slate-50 p-4 rounded-lg border border-slate-100">
+            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-2">Diagnosis ({rec.issue_type})</p>
+            <p className="text-slate-700 text-sm whitespace-pre-line mb-2">{rec.root_cause_diagnosis || rec.problem}</p>
+            <p className="text-amber-600 text-xs font-semibold flex items-center gap-1 mt-3">
+              <ShieldAlert size={14} /> Recurring Issue: Seen {rec.recurring_count || 1} times
+            </p>
+          </div>
+          <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100">
+            <p className="text-indigo-500 text-xs font-bold uppercase tracking-wider mb-2">Recommended Fix</p>
+            <p className="text-indigo-900 text-sm font-mono whitespace-pre-line">{rec.recommended_change}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium text-slate-700">Apply to:</label>
+            <select 
+              value={applyTo} 
+              onChange={(e) => setApplyTo(e.target.value)}
+              className="text-sm border-slate-300 rounded-lg shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+            >
+              <option value="agent">This Agent Only ({rec.agent__name})</option>
+              <option value="role">All Agents with this Role</option>
+              <option value="workspace">Entire Workspace</option>
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => onReject(rec.id)} className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors">
+              Reject
+            </button>
+            <button onClick={() => onAccept(rec.id, applyTo)} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm">
+              Approve & Monitor
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

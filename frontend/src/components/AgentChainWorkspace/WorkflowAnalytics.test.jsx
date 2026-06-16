@@ -2,10 +2,10 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import WorkflowAnalytics from './WorkflowAnalytics';
-import api from '../../api';
+import { api } from '../../api';
 
 vi.mock('../../api', () => ({
-  default: {
+  api: {
     get: vi.fn(),
     post: vi.fn()
   }
@@ -40,7 +40,11 @@ describe('WorkflowAnalytics', () => {
             agent__name: 'Analysis Node',
             issue_type: 'Quality Evaluator',
             problem: 'Missing sources',
-            recommended_change: 'Add 3 sources'
+            recommended_change: 'Add 3 sources',
+            root_cause_diagnosis: 'Sources not retrieved',
+            target_area: 'rag_sources',
+            confidence_score: 8.5,
+            recurring_count: 3
           }
         ]
       }
@@ -79,6 +83,9 @@ describe('WorkflowAnalytics', () => {
 
   it('renders alerts', async () => {
     render(<WorkflowAnalytics topicId={1} />);
-    expect(await screen.findByText(/Low Score Detected: Analysis Node/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Target: Analysis Node/i)).toBeInTheDocument();
+    expect(screen.getByText(/Sources not retrieved/i)).toBeInTheDocument();
+    expect(screen.getByText(/rag sources/i)).toBeInTheDocument();
+    expect(screen.getByText(/Confidence: 8.5\/10/i)).toBeInTheDocument();
   });
 });
