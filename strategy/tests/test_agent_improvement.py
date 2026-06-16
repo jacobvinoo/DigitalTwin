@@ -196,6 +196,80 @@ class AgentImprovementLoopTests(TestCase):
         
         recommendation.refresh_from_db()
         self.assertEqual(recommendation.status, "rejected")
+        
+    def test_dashboard_stats_api(self):
+        # Setup trace
+        version = ChainExecutionVersion.objects.create(
+            topic=self.topic,
+            version_number=1,
+            status="completed",
+            started_by=self.user
+        )
+        trace = AgentRunTrace.objects.create(
+            execution_version=version,
+            agent=self.agent,
+            run_order=1
+        )
+        
+        # 1 Pending Recommendation
+        AgentImprovementRecommendation.objects.create(
+            agent=self.agent,
+            execution_version=version,
+            agent_trace=trace,
+            issue_type="Quality Evaluator",
+            problem="Too generic.",
+            recommended_change="Always cite 3 sources.",
+            target_area="prompt",
+            status="proposed",
+            recurring_count=2
+        )
+        
+        # 1 Applied Recommendation
+        applied_rec = AgentImprovementRecommendation.objects.create(
+            agent=self.agent,
+            execution_version=version,
+            agent_trace=trace,
+            issue_type="Quality Evaluator",
+            problem="Another issue.",
+            recommended_change="Fix it.",
+            target_area="prompt",
+            status="applied",
+            recurring_count=3
+        )
+        
+        # 1 Monitoring Experiment
+        from strategy.models import AgentImprovementExperiment
+        AgentImprovementExperiment.objects.create(
+            recommendation=applied_rec,
+            agent=self.agent,
+            baseline_score=4.0,
+            status="monitoring",
+            runs_observed=1
+        )
+        
+        from rest_framework.test import APIClient
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        
+        # Call the dashboard stats endpoint
+        response = client.get("/api/experiments/dashboard_stats/")
+        self.assertEqual(response.status_code, 200)
+        data = response.data
+        
+        self.assertEqual(data["pending_recommendations"], 1)
+        self.assertEqual(data["applied_recommendations"], 1)
+        self.assertEqual(data["experiments_monitoring"], 1)
+        
+        # Check aggregations for recurring weaknesses
+        weaknesses = data["top_recurring_weaknesses"]
+        self.assertEqual(len(weaknesses), 1)
+        self.assertEqual(weaknesses[0]["issue"], "Quality Evaluator")
+        self.assertEqual(weaknesses[0]["count"], 2) # It groups by issue type
+        
+        # Check pending list
+        pending_list = data["pending_recommendations_list"]
+        self.assertEqual(len(pending_list), 1)
+        self.assertEqual(pending_list[0]["issue_type"], "Quality Evaluator")
 
     @patch('strategy.evaluation_engine.get_llm_client')
     def test_human_review_veto_logic(self, mock_get_llm_client):
@@ -454,6 +528,77 @@ class AgentImprovementLoopTests(TestCase):
         
         # Verify that AgentEvaluationHistory was created
         self.assertTrue(AgentEvaluationHistory.objects.filter(agent=self.agent, execution_version=version).exists())
+
+    @patch('strategy.evaluation_engine.get_llm_client')
+    def test_evaluator_schema_failure_creates_system_event(self, mock_get_llm_client):
+        from strategy.models import SystemExecutionEvent, AgentImprovementRecommendation
+        version = ChainExecutionVersion.objects.create(topic=self.topic, version_number=1, status="completed", started_by=self.user)
+        trace = AgentRunTrace.objects.create(execution_version=version, agent=self.agent, run_order=1)
+        
+        mock_llm = mock_get_llm_client.return_value
+        mock_llm.execute.side_effect = ValueError("Output schema missing configured score_field 'quality_score'")
+        
+        from strategy.evaluation_engine import run_post_agent_evaluation
+        run_post_agent_evaluation(trace)
+        
+        # Verify no recommendations created
+        self.assertFalse(AgentImprovementRecommendation.objects.exists())
+        
+        # Verify a SystemExecutionEvent was created
+        event = SystemExecutionEvent.objects.filter(agent_trace=trace, event_type="schema_error").first()
+        self.assertIsNotNone(event)
+        self.assertIn("score_field", event.message.lower())
+
+    @patch('strategy.evaluation_engine.get_llm_client')
+    def test_rate_limit_creates_system_event(self, mock_get_llm_client):
+        from strategy.models import SystemExecutionEvent, AgentImprovementRecommendation
+        version = ChainExecutionVersion.objects.create(topic=self.topic, version_number=1, status="completed", started_by=self.user)
+        trace = AgentRunTrace.objects.create(execution_version=version, agent=self.agent, run_order=1)
+        
+        mock_llm = mock_get_llm_client.return_value
+        mock_llm.execute.side_effect = Exception("429 Too Many Requests: Rate limit exceeded")
+        
+        from strategy.evaluation_engine import run_post_agent_evaluation
+        run_post_agent_evaluation(trace)
+        
+        # Verify no recommendations created
+        self.assertFalse(AgentImprovementRecommendation.objects.exists())
+        
+        # Verify a SystemExecutionEvent was created
+        event = SystemExecutionEvent.objects.filter(agent_trace=trace, event_type="rate_limit").first()
+        self.assertIsNotNone(event)
+        self.assertIn("429", event.message.lower())
+
+    @patch('strategy.evaluation_engine.get_llm_client')
+    def test_duplicate_recommendations_are_merged(self, mock_get_llm_client):
+        from strategy.models import AgentImprovementRecommendation
+        
+        # Run 1
+        version1 = ChainExecutionVersion.objects.create(topic=self.topic, version_number=1, status="completed", started_by=self.user)
+        trace1 = AgentRunTrace.objects.create(execution_version=version1, agent=self.agent, run_order=1)
+        
+        mock_llm = mock_get_llm_client.return_value
+        class MockResponse:
+            data = {"score": 4, "feedback": "Needs evidence."}
+        mock_llm.execute.return_value = MockResponse()
+        
+        from strategy.evaluation_engine import run_post_agent_evaluation
+        run_post_agent_evaluation(trace1)
+        
+        # Should have 1 recommendation
+        self.assertEqual(AgentImprovementRecommendation.objects.count(), 1)
+        rec1 = AgentImprovementRecommendation.objects.first()
+        self.assertEqual(rec1.recurring_count, 1)
+        
+        # Run 2 with same evaluator fail
+        version2 = ChainExecutionVersion.objects.create(topic=self.topic, version_number=2, status="completed", started_by=self.user)
+        trace2 = AgentRunTrace.objects.create(execution_version=version2, agent=self.agent, run_order=1)
+        run_post_agent_evaluation(trace2)
+        
+        # Should still have 1 recommendation but count is 2
+        self.assertEqual(AgentImprovementRecommendation.objects.count(), 1)
+        rec2 = AgentImprovementRecommendation.objects.first()
+        self.assertEqual(rec2.recurring_count, 2)
 
     def test_prompt_consolidation(self):
         from strategy.prompt_consolidation import consolidate_agent_prompts

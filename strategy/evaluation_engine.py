@@ -98,12 +98,29 @@ def run_post_agent_evaluation(agent_trace):
                 overall_score=score
             )
         except Exception as e:
-            evaluations.append({
-                "evaluator": et.name,
-                "score": 0,
-                "feedback": f"Evaluation failed: {str(e)}",
-                "passed": False
-            })
+            error_str = str(e).lower()
+            from strategy.models import SystemExecutionEvent
+            if "score_field" in error_str or "schema" in error_str:
+                event_type = "schema_error"
+                suggested_fix = "Update EvaluationTemplate.score_field to match the schema output keys."
+            elif "429" in error_str or "rate limit" in error_str:
+                event_type = "rate_limit"
+                suggested_fix = "Queue evaluations, increase rate limit or use a smaller evaluator model."
+            else:
+                event_type = "evaluation_failed"
+                suggested_fix = "Check provider status or LLM configuration."
+                
+            SystemExecutionEvent.objects.create(
+                topic=agent.topic,
+                agent=agent,
+                agent_trace=agent_trace,
+                event_type=event_type,
+                severity="error",
+                message=f"Evaluation failed: {str(e)}",
+                technical_details={"evaluator": et.name, "trace_id": agent_trace.id},
+                suggested_fix=suggested_fix
+            )
+            continue
 
     # Save evaluations to the trace record
     agent_trace.validation_result = evaluations
@@ -216,20 +233,25 @@ def run_post_agent_evaluation(agent_trace):
                 rec_text = f"Improve system prompt to address: {low.get('feedback')}"
                 target = "prompt"
             
-        AgentImprovementRecommendation.objects.create(
+        rec, created = AgentImprovementRecommendation.objects.get_or_create(
             agent=agent,
-            execution_version=execution_version,
-            agent_trace=agent_trace,
             issue_type=low.get("evaluator", "General"),
-            source_evaluation=str(low),
-            root_cause_diagnosis=root_cause,
-            problem=low.get("feedback", "No feedback"),
-            recommended_change=rec_text,
             target_area=target,
-            confidence_score=confidence_score,
-            recurring_count=recurring_count,
-            status="proposed"
+            status="proposed",
+            defaults={
+                "execution_version": execution_version,
+                "agent_trace": agent_trace,
+                "source_evaluation": str(low),
+                "root_cause_diagnosis": root_cause,
+                "problem": low.get("feedback", "No feedback"),
+                "recommended_change": rec_text,
+                "confidence_score": confidence_score,
+                "recurring_count": recurring_count,
+            }
         )
+        if not created:
+            rec.recurring_count += 1
+            rec.save(update_fields=['recurring_count'])
         
     # Update running experiments
     from .models import AgentImprovementExperiment

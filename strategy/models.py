@@ -838,6 +838,39 @@ class EvaluationRun(models.Model):
     def __str__(self):
         return f"Run {self.id} - Score: {self.overall_score}"
 
+class SystemExecutionEvent(models.Model):
+    SEVERITY_CHOICES = [
+        ("info", "Info"),
+        ("warning", "Warning"),
+        ("error", "Error"),
+        ("critical", "Critical"),
+    ]
+
+    EVENT_TYPES = [
+        ("evaluation_failed", "Evaluation Failed"),
+        ("rate_limit", "Rate Limit"),
+        ("schema_error", "Schema Error"),
+        ("provider_error", "Provider Error"),
+        ("trace_error", "Trace Error"),
+        ("artifact_error", "Artifact Error"),
+        ("configuration_error", "Configuration Error"),
+    ]
+
+    topic = models.ForeignKey(Topic, null=True, blank=True, on_delete=models.SET_NULL)
+    agent = models.ForeignKey(AgentDefinition, null=True, blank=True, on_delete=models.SET_NULL)
+    agent_trace = models.ForeignKey(AgentRunTrace, null=True, blank=True, on_delete=models.SET_NULL)
+
+    event_type = models.CharField(max_length=100, choices=EVENT_TYPES)
+    severity = models.CharField(max_length=50, choices=SEVERITY_CHOICES)
+    message = models.TextField()
+    technical_details = models.JSONField(default=dict, blank=True)
+    suggested_fix = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.get_event_type_display()} - {self.severity} for {self.agent.name if self.agent else 'System'}"
+
 class AgentEvaluationHistory(models.Model):
     agent = models.ForeignKey(AgentDefinition, on_delete=models.CASCADE)
     execution_version = models.ForeignKey(ChainExecutionVersion, on_delete=models.CASCADE)

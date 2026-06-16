@@ -439,26 +439,33 @@ class TopicViewSet(viewsets.ModelViewSet):
         import threading
         from django.db import connection
         
-        def run_it():
+        def run_it(v_id, sorted_ids):
             try:
-                executor.execute(topic=topic, user=request.user, trigger_input=trigger_input)
+                executor.execute_existing_version(v_id, sorted_ids, trigger_input)
             except Exception as e:
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.error(f"Chain execution error: {str(e)}")
             finally:
                 connection.close()
-
-        # Validate graph before starting thread so we can return 400 immediately if invalid
-        from strategy.chain_engine import AgentChainValidator
-        validator = AgentChainValidator(topic)
-        is_valid, errors = validator.validate()
-        if not is_valid:
-            return Response({"error": f"Invalid graph: {errors}"}, status=400)
                 
-        threading.Thread(target=run_it).start()
+        try:
+            version, sorted_ids = executor.create_execution_version(
+                topic=topic, 
+                user=request.user, 
+                trigger_input=trigger_input
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+        threading.Thread(target=run_it, args=(version.id, sorted_ids)).start()
         
-        return Response({"status": "started"})
+        return Response({
+            "status": "started",
+            "execution_version_id": version.id
+        })
 
     @action(detail=True, methods=["get"], url_path="chain-versions")
     def chain_versions(self, request, pk=None):
@@ -1308,30 +1315,66 @@ class AgentImprovementExperimentViewSet(viewsets.ModelViewSet):
         from django.db.models import Avg, Count
         
         user = request.user
-        experiments = AgentImprovementExperiment.objects.filter(agent__topic__owner=user)
+        # Recommendations
+        pending_recommendations = AgentImprovementRecommendation.objects.filter(
+            agent__topic__owner=user, status="proposed"
+        )
+        applied_recommendations = AgentImprovementRecommendation.objects.filter(
+            agent__topic__owner=user, status="applied"
+        ).count()
+        rejected_recommendations = AgentImprovementRecommendation.objects.filter(
+            agent__topic__owner=user, status="rejected"
+        ).count()
+        rolled_back_recommendations = AgentImprovementRecommendation.objects.filter(
+            agent__topic__owner=user, status="rolled_back"
+        ).count()
         
-        total_applied = experiments.count()
+        # Experiments
+        experiments = AgentImprovementExperiment.objects.filter(agent__topic__owner=user)
+        experiments_monitoring = experiments.filter(status="monitoring").count()
         successful = experiments.filter(status="successful").count()
         failed = experiments.filter(status="failed").count()
         
         avg_impact = experiments.aggregate(Avg('delta'))['delta__avg'] or 0.0
         
-        # Find recurring weaknesses (high recurring count)
-        recurring_weaknesses = AgentImprovementRecommendation.objects.filter(
-            agent__topic__owner=user
-        ).order_by('-recurring_count')[:5]
+        # Find recurring weaknesses (aggregated by agent and issue_type)
+        recurring_weaknesses = (
+            AgentImprovementRecommendation.objects
+            .filter(agent__topic__owner=user)
+            .values("agent__name", "issue_type")
+            .annotate(count=Count("id"))
+            .order_by("-count")[:5]
+        )
         
         weaknesses_data = [
-            {"issue": r.issue_type, "count": r.recurring_count, "agent": r.agent.name}
+            {"issue": r["issue_type"], "agent": r["agent__name"], "count": r["count"]}
             for r in recurring_weaknesses
         ]
         
+        pending_list = [
+            {
+                "id": r.id,
+                "agent_name": r.agent.name,
+                "issue_type": r.issue_type,
+                "problem": r.problem,
+                "recommended_change": r.recommended_change,
+                "confidence_score": r.confidence_score,
+                "recurring_count": r.recurring_count
+            }
+            for r in pending_recommendations
+        ]
+        
         return Response({
-            "total_improvements_applied": total_applied,
+            "pending_recommendations": pending_recommendations.count(),
+            "applied_recommendations": applied_recommendations,
+            "rejected_recommendations": rejected_recommendations,
+            "rolled_back_recommendations": rolled_back_recommendations,
+            "experiments_monitoring": experiments_monitoring,
             "successful_improvements": successful,
             "failed_improvements": failed,
             "average_score_impact": round(avg_impact, 2),
-            "top_recurring_weaknesses": weaknesses_data
+            "top_recurring_weaknesses": weaknesses_data,
+            "pending_recommendations_list": pending_list
         })
 
 class ChainExecutionVersionViewSet(viewsets.ViewSet):
@@ -1363,13 +1406,14 @@ class ChainExecutionVersionViewSet(viewsets.ViewSet):
                 "input_payload": t.input_payload or t.mapped_input_payload,
                 "mapped_input_payload": t.mapped_input_payload,
                 "output_payload": t.output_payload,
+                "validation_result": t.validation_result,
                 "prompt_snapshot": t.prompt_snapshot,
                 "prompt_traces": [
                     {
                         "template_name": pt.prompt_template.name,
                         "version": pt.version_number,
                         "snapshot": pt.prompt_snapshot
-                    } for pt in t.prompt_traces.all().order_by('execution_order')
+                    } for pt in t.promptexecutiontrace_set.all().order_by('execution_order')
                 ],
                 "evaluations": [
                     {
@@ -1377,7 +1421,7 @@ class ChainExecutionVersionViewSet(viewsets.ViewSet):
                         "score": ev.score,
                         "passed": ev.passed,
                         "feedback": ev.feedback
-                    } for ev in t.evaluations.all()
+                    } for ev in t.evaluationrun_set.all()
                 ],
                 "started_at": t.started_at,
                 "completed_at": t.completed_at,
@@ -1395,3 +1439,11 @@ class ChainExecutionVersionViewSet(viewsets.ViewSet):
         except ChainExecutionVersion.DoesNotExist:
             return Response({"error": "Not found"}, status=404)
 
+class SystemExecutionEventViewSet(viewsets.ReadOnlyModelViewSet):
+    from strategy.serializers import SystemExecutionEventSerializer
+    serializer_class = SystemExecutionEventSerializer
+
+    def get_queryset(self):
+        from strategy.models import SystemExecutionEvent
+        # Assuming we filter by events related to the user's topics
+        return SystemExecutionEvent.objects.filter(topic__owner=self.request.user).order_by('-created_at')

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Activity, ShieldAlert, BarChart2, Undo2, CheckCircle, AlertTriangle, XCircle, TrendingUp, TrendingDown } from 'lucide-react';
 import { api } from '../../api';
 
-export default function ImprovementDashboard({ topicId }) {
+export default function ImprovementDashboard({ topicId, refreshKey }) {
   const [stats, setStats] = useState(null);
   const [experiments, setExperiments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,7 +24,7 @@ export default function ImprovementDashboard({ topicId }) {
 
   useEffect(() => {
     fetchData();
-  }, [topicId]);
+  }, [topicId, refreshKey]);
 
   const handleRollback = async (id) => {
     try {
@@ -54,10 +54,18 @@ export default function ImprovementDashboard({ topicId }) {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex items-start justify-between">
             <div>
-              <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Total Applied</p>
-              <p className="text-3xl font-bold text-slate-700">{stats.total_improvements_applied}</p>
+              <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Pending</p>
+              <p className="text-3xl font-bold text-amber-600">{stats.pending_recommendations || 0}</p>
             </div>
-            <div className="p-2 bg-slate-100 rounded-lg"><Activity size={20} className="text-slate-600" /></div>
+            <div className="p-2 bg-amber-50 rounded-lg"><Activity size={20} className="text-amber-600" /></div>
+          </div>
+          
+          <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex items-start justify-between">
+            <div>
+              <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Monitoring</p>
+              <p className="text-3xl font-bold text-blue-600">{stats.experiments_monitoring || 0}</p>
+            </div>
+            <div className="p-2 bg-blue-50 rounded-lg"><BarChart2 size={20} className="text-blue-600" /></div>
           </div>
           
           <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex items-start justify-between">
@@ -86,6 +94,72 @@ export default function ImprovementDashboard({ topicId }) {
             <div className={`p-2 rounded-lg ${stats.average_score_impact >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
               {stats.average_score_impact >= 0 ? <TrendingUp size={20} className="text-green-600" /> : <TrendingDown size={20} className="text-red-600" />}
             </div>
+          </div>
+        </div>
+
+        {/* Pending Recommendations Section */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+          <div className="p-5 border-b border-slate-100 flex items-center gap-2">
+            <Activity className="text-slate-400" size={18} />
+            <h2 className="text-lg font-semibold text-slate-800">Pending Improvement Recommendations</h2>
+          </div>
+          <div className="p-0 overflow-x-auto">
+            {stats.pending_recommendations_list?.length === 0 ? (
+              <div className="p-5 text-slate-500 text-sm">No pending recommendations to review.</div>
+            ) : (
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                    <th className="p-4 font-medium border-b border-slate-100">Agent</th>
+                    <th className="p-4 font-medium border-b border-slate-100">Issue Type</th>
+                    <th className="p-4 font-medium border-b border-slate-100 w-1/3">Proposed Fix</th>
+                    <th className="p-4 font-medium border-b border-slate-100 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="text-sm text-slate-700 divide-y divide-slate-100">
+                  {stats.pending_recommendations_list?.map((rec) => (
+                    <tr key={rec.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="p-4 font-medium text-slate-900">{rec.agent_name}</td>
+                      <td className="p-4">
+                        <span className="font-semibold text-slate-800">{rec.issue_type}</span>
+                        <p className="text-xs text-slate-500 mt-1 truncate max-w-[200px]" title={rec.problem}>{rec.problem}</p>
+                      </td>
+                      <td className="p-4 text-xs text-slate-600 whitespace-pre-wrap max-w-sm font-mono bg-slate-50/50">
+                        {rec.recommended_change}
+                      </td>
+                      <td className="p-4 text-right space-x-2">
+                        <button 
+                          onClick={async () => {
+                            try {
+                              await api.post(`/api/recommendations/${rec.id}/accept/`);
+                              fetchData();
+                            } catch (err) {
+                              alert("Failed to accept recommendation.");
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 transition-colors"
+                        >
+                          <CheckCircle size={14} /> Accept
+                        </button>
+                        <button 
+                          onClick={async () => {
+                            try {
+                              await api.post(`/api/recommendations/${rec.id}/reject/`);
+                              fetchData();
+                            } catch (err) {
+                              alert("Failed to reject recommendation.");
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-50 transition-colors"
+                        >
+                          <XCircle size={14} /> Reject
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
 

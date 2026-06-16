@@ -234,6 +234,14 @@ class AgentImprovementRecommendationSerializer(serializers.ModelSerializer):
         model = AgentImprovementRecommendation
         fields = "__all__"
 
+class SystemExecutionEventSerializer(serializers.ModelSerializer):
+    agent_name = serializers.CharField(source='agent.name', read_only=True, allow_null=True)
+
+    class Meta:
+        from strategy.models import SystemExecutionEvent
+        model = SystemExecutionEvent
+        fields = "__all__"
+
 class AgentImprovementExperimentSerializer(serializers.ModelSerializer):
     class Meta:
         from strategy.models import AgentImprovementExperiment

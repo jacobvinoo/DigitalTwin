@@ -74,7 +74,7 @@ def get_llm_client():
     return LLMClient()
 
 class AgentChainExecutor:
-    def execute(self, *, topic, user, trigger_input):
+    def create_execution_version(self, *, topic, user, trigger_input):
         validator = AgentChainValidator(topic)
         is_valid, errors = validator.validate()
         if not is_valid:
@@ -105,8 +105,7 @@ class AgentChainExecutor:
         # Topological Sort
         adj = defaultdict(list)
         in_degree = defaultdict(int)
-        agent_map = {a.id: a for a in agents}
-
+        
         for e in edges:
             adj[e.source_agent_id].append(e.target_agent_id)
             in_degree[e.target_agent_id] += 1
@@ -121,6 +120,15 @@ class AgentChainExecutor:
                 in_degree[neighbor] -= 1
                 if in_degree[neighbor] == 0:
                     queue.append(neighbor)
+
+        return version, sorted_ids
+
+    def execute_existing_version(self, version_id, sorted_ids, trigger_input):
+        version = ChainExecutionVersion.objects.get(id=version_id)
+        topic = version.topic
+        agents = list(AgentDefinition.objects.filter(topic=topic))
+        edges = list(AgentEdge.objects.filter(topic=topic))
+        agent_map = {a.id: a for a in agents}
 
         # Execution
         completed_outputs = {}
@@ -184,19 +192,33 @@ class AgentChainExecutor:
             
             try:
                 llm = get_llm_client()
-                # If using mock, our test LLM doesn't have true schema validation, but we expect dict back.
-                # Standard LLMClient in product has .execute or .complete_json
-                telemetry = {}
-                if hasattr(llm, "complete_json"):
-                    output = llm.complete_json(prompt=prompt, output_schema=agent.output_schema, model=agent.model_name)
-                else:
-                    exec_result = llm.execute(prompt=prompt, schema_dict=agent.output_schema, model=agent.model_name)
-                    if hasattr(exec_result, "telemetry"):
-                        telemetry = exec_result.telemetry
-                    if not isinstance(exec_result, dict):
-                        output = getattr(exec_result, "data", {})
-                    else:
-                        output = exec_result
+                
+                exec_result = llm.execute(
+                    prompt=prompt,
+                    prompt_version="chain_execution_v1",
+                    schema_dict=agent.output_schema or {
+                        "type": "object",
+                        "properties": {
+                            "markdown_content": {"type": "string"},
+                            "sources": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "title": {"type": "string"},
+                                        "url": {"type": "string"},
+                                        "publisher": {"type": "string"},
+                                        "source_type": {"type": "string"}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    model=agent.model_name if agent.model_name and agent.model_name != "default" else "gpt-4o"
+                )
+
+                output = exec_result.data if hasattr(exec_result, "data") else exec_result
+                telemetry = exec_result.telemetry if hasattr(exec_result, "telemetry") else {}
                 
                 # Convert Pydantic objects to dict if necessary
                 if not isinstance(output, dict) and hasattr(output, "dict"):
@@ -243,8 +265,14 @@ class AgentChainExecutor:
                 completed_outputs[agent.id] = output
                 
             except Exception as e:
+                trace.output_payload = {}
+                trace.telemetry = telemetry if "telemetry" in locals() else {}
+                trace.validation_result = {
+                    "error": str(e),
+                    "node": agent.name,
+                    "prompt_version": "chain_execution_v1"
+                }
                 trace.status = "failed"
-                trace.validation_result = {"error": str(e)}
                 trace.completed_at = timezone.now()
                 trace.save()
                 

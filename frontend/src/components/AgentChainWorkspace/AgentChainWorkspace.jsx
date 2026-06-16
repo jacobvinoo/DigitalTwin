@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ReactFlow, Background, Controls, useNodesState, useEdgesState, addEdge as addReactFlowEdge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Settings, Play, CheckCircle, BarChart2, GitBranch, ArrowLeft, Plus, TrendingUp, FileText } from 'lucide-react';
+import { Settings, Play, CheckCircle, BarChart2, GitBranch, ArrowLeft, Plus, TrendingUp, FileText, ShieldAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AgentNode from './AgentNode';
 import AgentDetailPanel from './AgentDetailPanel';
 import WorkflowAnalytics from './WorkflowAnalytics';
 import ImprovementDashboard from './ImprovementDashboard';
 import ArtifactsDashboard from './ArtifactsDashboard';
+import SystemHealthPanel from './SystemHealthPanel';
 import { mapBackendToReactFlow } from '../../utils/agentGraphMapper';
 import { api } from '../../api';
 
@@ -23,6 +24,7 @@ const AgentChainWorkspace = ({ topicId }) => {
   const [selectedTrace, setSelectedTrace] = useState(null);
   const [viewMode, setViewMode] = useState('canvas'); // 'canvas' or 'analytics'
   const [loading, setLoading] = useState(true);
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
 
   const [topic, setTopic] = useState(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -118,6 +120,8 @@ const AgentChainWorkspace = ({ topicId }) => {
                     
                     if (latestVersion.status === "completed" || latestVersion.status === "failed") {
                         setIsRunning(false);
+                        await loadGraph(); // refresh node metrics after run
+                        setDashboardRefreshKey(prev => prev + 1);
                     }
                 }
             } catch (err) {
@@ -249,15 +253,16 @@ const AgentChainWorkspace = ({ topicId }) => {
     if (isRunning) return;
     try {
       setIsRunning(true);
-      // Execute the chain (now async in backend)
-      await api.post(`/api/topics/${topicId}/execute-chain/`, {
+      const resp = await api.post(`/api/topics/${topicId}/execute-chain/`, {
           trigger_input: { trigger: "manual" }
       });
       
-      // Give the backend a tiny headstart to create the version
-      await new Promise(r => setTimeout(r, 500));
+      if (resp.data.execution_version_id) {
+          setSelectedVersionId(resp.data.execution_version_id);
+      }
       
-      // Polling effect above will pick up the new version and its traces!
+      // Force an immediate reload of versions to start the polling loop cleanly
+      await loadVersions();
     } catch (err) {
       console.error("Failed to run chain", err);
       const backendError = err.response?.data?.error || err.message;
@@ -347,12 +352,20 @@ const AgentChainWorkspace = ({ topicId }) => {
             >
               <BarChart2 size={16} className={viewMode === 'analytics' ? 'text-indigo-600' : 'text-gray-400'} /> Analytics Dashboard
             </button>
-            <button 
-              onClick={() => setViewMode('improvements')}
-              className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${viewMode === 'improvements' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
-            >
-              <TrendingUp size={16} className={viewMode === 'improvements' ? 'text-indigo-600' : 'text-gray-400'} /> Improvements
-            </button>
+            <div className="space-y-1">
+              <button 
+                onClick={() => setViewMode('improvements')}
+                className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${viewMode === 'improvements' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
+              >
+                <TrendingUp size={16} className={viewMode === 'improvements' ? 'text-indigo-600' : 'text-gray-400'} /> Improvements
+              </button>
+              <button 
+                onClick={() => setViewMode('health')}
+                className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${viewMode === 'health' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
+              >
+                <ShieldAlert size={16} className={viewMode === 'health' ? 'text-indigo-600' : 'text-gray-400'} /> System Health
+              </button>
+            </div>
             <button 
               onClick={() => setViewMode('artifacts')}
               className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${viewMode === 'artifacts' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
@@ -385,11 +398,69 @@ const AgentChainWorkspace = ({ topicId }) => {
             <Background color="#ccc" gap={16} />
             <Controls />
           </ReactFlow>
+
+          {/* Execution Trace Panel overlay */}
+          {traces.length > 0 && (
+            <div className="absolute bottom-4 left-4 right-4 bg-white/95 backdrop-blur-sm shadow-xl rounded-lg border border-gray-200 z-10 max-h-64 flex flex-col">
+              <div className="px-4 py-2 border-b border-gray-200 bg-gray-50/50 rounded-t-lg">
+                <h3 className="text-sm font-semibold text-gray-800">Execution Trace Panel</h3>
+              </div>
+              <div className="overflow-y-auto p-0">
+                <table className="w-full text-xs text-left text-gray-600">
+                  <thead className="text-xs text-gray-500 uppercase bg-gray-50 sticky top-0 border-b border-gray-200">
+                    <tr>
+                      <th className="px-4 py-2 font-medium">Node</th>
+                      <th className="px-4 py-2 font-medium">Status</th>
+                      <th className="px-4 py-2 font-medium">Started</th>
+                      <th className="px-4 py-2 font-medium">Completed</th>
+                      <th className="px-4 py-2 font-medium w-1/3">Error</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {traces.map((t) => {
+                      const selectedVersion = versions.find(v => v.id === selectedVersionId);
+                      const isFailed = t.status === "failed";
+                      const isRunningNode = t.status === "running";
+                      return (
+                        <tr 
+                          key={t.id} 
+                          className="hover:bg-indigo-50 cursor-pointer transition-colors"
+                          onClick={(e) => {
+                            const node = nodes.find(n => String(n.id) === String(t.agent_id) || String(n.data?.backendId) === String(t.agent_id));
+                            if (node) {
+                                onNodeClick(e, node);
+                            }
+                          }}
+                        >
+                          <td className="px-4 py-2 font-medium text-gray-900">{t.agent_name}</td>
+                          <td className="px-4 py-2">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider
+                              ${isFailed ? 'bg-red-100 text-red-800' : 
+                                isRunningNode ? 'bg-amber-100 text-amber-800 animate-pulse' : 
+                                'bg-emerald-100 text-emerald-800'}`}>
+                              {t.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-gray-500">{t.started_at ? new Date(t.started_at).toLocaleTimeString() : '-'}</td>
+                          <td className="px-4 py-2 text-gray-500">{t.completed_at ? new Date(t.completed_at).toLocaleTimeString() : '-'}</td>
+                          <td className="px-4 py-2 text-red-600 truncate max-w-xs" title={t.validation_result?.error || ""}>
+                            {t.validation_result?.error || "-"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       ) : viewMode === 'analytics' ? (
         <WorkflowAnalytics topicId={topicId} />
       ) : viewMode === 'improvements' ? (
-        <ImprovementDashboard topicId={topicId} />
+        <ImprovementDashboard topicId={topicId} refreshKey={dashboardRefreshKey} />
+      ) : viewMode === 'health' ? (
+        <SystemHealthPanel topicId={topicId} />
       ) : (
         <ArtifactsDashboard topicId={topicId} />
       )}
