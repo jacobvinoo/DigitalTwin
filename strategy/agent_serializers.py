@@ -6,9 +6,30 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AgentDefinition
-        fields = "__all__"
-        read_only_fields = ["topic", "created_at", "updated_at"]
+        fields = [
+            "id",
+            "name",
+            "role",
+            "system_prompt",
+            "instructions",
+            "output_schema",
+            "input_schema",
+            "is_entrypoint",
+            "is_terminal",
+            "position_x",
+            "position_y",
+            "created_at",
+            "updated_at",
+            "metrics",
+            "model_name",
+            "temperature",
+            "topic",
 
+            "description",
+            "rag_collection_id",
+            "memory_scope",
+        ]
+        read_only_fields = ["topic"]
     def get_metrics(self, obj):
         from .models import AgentRunTrace
         traces = AgentRunTrace.objects.filter(agent=obj, status="completed").order_by('-id')[:2]

@@ -473,8 +473,13 @@ const AgentChainWorkspace = ({ topicId }) => {
             setSelectedNode(null);
             setSelectedTrace(null);
           }} 
-          onRunComplete={(trace) => {
+          onRunComplete={async (trace) => {
             setSelectedTrace(trace);
+            // Append the new ad-hoc trace to the panel manually, because ad-hoc 
+            // single node runs aren't tied to the old chain version.
+            setTraces(prev => [trace, ...prev.filter(t => t.id !== trace.id)]);
+            
+            await loadGraph(); // refresh node metrics after run
           }}
           onDeleteAgent={async () => {
             if (selectedNode) {

@@ -39,6 +39,10 @@ router.register(r'system-events', SystemExecutionEventViewSet, basename='systeme
 
 urlpatterns = [
     path('', include(router.urls)),
+    # Manual route for visual_webpage_builder to satisfy test reverse lookup
+    path('agents/<int:pk>/visual_webpage_builder/',
+         AgentDefinitionViewSet.as_view({'post': 'visual_webpage_builder'}),
+         name='agent-visual_webpage_builder'),
     path('topics/<int:topic_id>/agents/', create_topic_agent, name='create-topic-agent'),
     path('topics/<int:topic_id>/edges/', create_topic_edge, name='create-topic-edge'),
     path('topics/<int:topic_id>/agent-graph/', get_agent_graph, name='get-agent-graph'),

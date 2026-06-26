@@ -37,6 +37,9 @@ def test_create_topic_with_custom_workspace_type(api_client, user):
 def test_agent_definition_crud(api_client, user, topic):
     api_client.force_authenticate(user=user)
     
+    # Create an EvaluationTemplate to verify it gets auto-assigned
+    EvaluationTemplate.objects.create(name="Quality Check", evaluation_prompt="Is it good?", category="quality")
+
     # Create agent
     response = api_client.post(f'/api/topics/{topic.id}/agents/', {
         "name": "Test Agent",
@@ -45,12 +48,25 @@ def test_agent_definition_crud(api_client, user, topic):
     }, format="json")
     assert response.status_code == status.HTTP_201_CREATED
     agent_id = response.data["id"]
+    
+    # Assert evaluators were auto-assigned
+    agent = AgentDefinition.objects.get(id=agent_id)
+    eval_assignments = EvaluationAssignment.objects.filter(agent=agent, enabled=True)
+    assert eval_assignments.count() > 0
+    assert eval_assignments.first().evaluation_template.name == "Quality Check"
 
-    # Update agent
+    # Update an agent
     response = api_client.patch(f'/api/agents/{agent_id}/', {
         "instructions": "New instructions"
     }, format="json")
     assert response.status_code == status.HTTP_200_OK
+    
+    expected_agent_model_keys = {
+        "id", "name", "role", "system_prompt", "instructions",
+        "output_schema", "input_schema", "is_entrypoint", "is_terminal", "position_x", "position_y",
+        "created_at", "updated_at", "metrics", "model_name", "temperature", "topic", "description", "rag_collection_id", "memory_scope"
+    }
+    assert set(response.data.keys()) == expected_agent_model_keys
     assert response.data["instructions"] == "New instructions"
 
     # Delete agent
@@ -77,6 +93,9 @@ def test_agent_edge_crud(api_client, user, topic):
         "label": "My Edge"
     }, format="json")
     assert response.status_code == status.HTTP_200_OK
+    
+    expected_edge_model_keys = {"id", "source_agent", "target_agent", "data_mapping", "label", "condition", "requires_approval", "topic", "created_at"}
+    assert set(response.data.keys()) == expected_edge_model_keys
     assert response.data["label"] == "My Edge"
 
     # Delete edge
@@ -91,10 +110,26 @@ def test_get_agent_graph(api_client, user, topic):
 
     response = api_client.get(f'/api/topics/{topic.id}/agent-graph/')
     assert response.status_code == status.HTTP_200_OK
-    assert "nodes" in response.data
-    assert "edges" in response.data
+    
+    expected_graph_keys = {"nodes", "edges"}
+    assert set(response.data.keys()) == expected_graph_keys
+    
     assert len(response.data["nodes"]) == 2
     assert len(response.data["edges"]) == 1
+    
+    # Assert Node Schema matches UI expectations
+    expected_node_keys = {
+        "id", "name", "role", "system_prompt", "instructions",
+        "output_schema", "input_schema", "is_entrypoint", "is_terminal", "position_x", "position_y",
+        "created_at", "updated_at", "metrics", "model_name", "temperature", "topic", "description", "rag_collection_id", "memory_scope"
+    }
+    node = response.data["nodes"][0]
+    assert set(node.keys()) == expected_node_keys
+
+    # Assert Edge Schema matches UI expectations
+    expected_edge_keys = {"id", "source_agent", "target_agent", "data_mapping", "label", "condition", "requires_approval", "topic", "created_at"}
+    edge = response.data["edges"][0]
+    assert set(edge.keys()) == expected_edge_keys
 
 from unittest.mock import patch
 from strategy.models import PromptTemplate, AgentPromptAssignment, EvaluationTemplate, EvaluationAssignment
@@ -136,11 +171,22 @@ def test_agent_run_real_llm_execution(mock_execute, api_client, user, topic):
     assert response.status_code == status.HTTP_200_OK
     assert response.data["status"] == "completed"
     trace = response.data["trace"]
+    
+    # Assert Trace format matches expected UI format
+    expected_keys = {
+        "id", "agent_id", "agent_name", "run_order", "status", 
+        "input_payload", "mapped_input_payload", "output_payload", 
+        "validation_result", "prompt_snapshot", "prompt_traces", 
+        "evaluations", "started_at", "completed_at", "execution_time_ms"
+    }
+    assert set(trace.keys()) == expected_keys, f"Trace keys {set(trace.keys())} do not match expected."
+    
     assert trace["agent_name"] == "Mock Agent"
     assert trace["input_payload"]["query"] == "Do this specific task."
+    assert trace["status"] == "completed"
 
     # Check that Prompts were included in trace
-    assert len(trace["prompt_traces"]) == 2
+    assert len(trace["prompt_traces"]) == 3
     
     # Verify LLM Execute Calls
     assert mock_execute.call_count == 2
@@ -165,8 +211,7 @@ def test_agent_run_real_llm_execution(mock_execute, api_client, user, topic):
     assert mock_execute.call_count == 2
 
 @patch('threading.Thread.start')
-@patch('strategy.chain_engine.AgentChainExecutor.execute')
-def test_execute_chain_endpoint_success(mock_execute, mock_thread_start, api_client, user, topic):
+def test_execute_chain_endpoint_success(mock_thread_start, api_client, user, topic):
     api_client.force_authenticate(user=user)
     
     # Needs valid graph, meaning exactly one entrypoint
@@ -198,3 +243,79 @@ def test_execute_chain_endpoint_invalid_graph(api_client, user, topic):
     
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert "Invalid graph" in response.data["error"]
+
+@patch('strategy.agents.client.LLMClient.execute')
+@patch('strategy.utils.web_search.get_search_adapter')
+@patch('strategy.utils.source_classifier.SourceRelevanceClassifier.filter_sources')
+@patch('strategy.utils.source_classifier.SnippetExtractor.extract_trends')
+def test_agent_run_needs_search_execution(mock_extract, mock_filter, mock_get_adapter, mock_execute, api_client, user, topic):
+    api_client.force_authenticate(user=user)
+    
+    agent = AgentDefinition.objects.create(
+        topic=topic, 
+        name="Research Agent", 
+        system_prompt="You are a system.", 
+        instructions="Perform a deep web search",
+        output_schema={}
+    )
+    
+    # Mock LLM returns for Query Generation and Evaluation
+    mock_execute.side_effect = [
+        type('LLMResult', (), {'data': {'queries': ['test query']}, 'telemetry': {'execution_time_ms': 500}, 'audit': {}})(),
+        type('LLMResult', (), {'data': {'score': 9, 'feedback': 'Good', 'metric_scores': {}}, 'telemetry': {'execution_time_ms': 200}, 'audit': {}})()
+    ]
+    
+    # Mock search adapter
+    class DummyAdapter:
+        def search(self, query):
+            return [{"title": "Test Source", "url": "http://test.com", "snippet": "Summary snippet"}]
+    mock_get_adapter.return_value = DummyAdapter()
+    
+    # Mock classifier and extractor
+    mock_filter.return_value = ([{"title": "Test Source", "url": "http://test.com", "snippet": "Summary snippet"}], [])
+    mock_extract.return_value = [type('Trend', (), {'model_dump': lambda: {'trend_signal': 'Trend!'}})()]
+    
+    response = api_client.post(f'/api/agents/{agent.id}/run/')
+    
+    assert response.status_code == status.HTTP_200_OK
+    trace = response.data["trace"]
+    
+    # Check that sources were correctly processed
+    assert len(trace["output_payload"]["sources_collected"]) == 1
+    
+    # Assert markdown document synthesis correctly formatted the data instead of JSON dumping it
+    markdown = trace["output_payload"]["markdown_content"]
+    assert "# Research Evidence Catalogue" in markdown
+    assert "### 1. Test Source" in markdown
+    
+    # Assert objective is NOT in the document
+    assert "Objective:" not in markdown
+    
+    # Assert objective IS in the prompt_traces
+    assert any(pt["template_name"] == "User Objective" and "Perform a deep web search" in pt["content"] for pt in trace["prompt_traces"])
+
+@patch('strategy.agents.client.LLMClient.execute')
+def test_agent_run_no_search_execution(mock_execute, api_client, user, topic):
+    api_client.force_authenticate(user=user)
+    
+    agent = AgentDefinition.objects.create(
+        topic=topic, 
+        name="Standard Agent", 
+        system_prompt="You are a system.", 
+        instructions="Just do a normal task.",
+        output_schema={}
+    )
+    
+    # Mock LLM generation and Evaluation
+    mock_execute.side_effect = [
+        type('LLMResult', (), {'data': {'markdown_content': 'Normal content', 'sources': []}, 'telemetry': {'execution_time_ms': 500}, 'audit': {}})(),
+        type('LLMResult', (), {'data': {'score': 9, 'feedback': 'Good', 'metric_scores': {}}, 'telemetry': {'execution_time_ms': 200}, 'audit': {}})()
+    ]
+    
+    response = api_client.post(f'/api/agents/{agent.id}/run/')
+    
+    assert response.status_code == status.HTTP_200_OK
+    trace = response.data["trace"]
+    
+    # Check that output_payload falls back properly without throwing UnboundLocalError
+    assert trace["output_payload"]["markdown_content"] == "Normal content"

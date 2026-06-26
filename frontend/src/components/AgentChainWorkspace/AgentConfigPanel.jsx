@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Book, CheckSquare, Square, ClipboardList, Play } from 'lucide-react';
+import { Settings, X, Book, CheckSquare, Square, ClipboardList, Play, Code } from 'lucide-react';
 import { api } from '../../api';
 
 const AgentConfigPanel = ({ agentId, agentName, onClose, onRunComplete, hideOuter }) => {
@@ -11,8 +11,10 @@ const AgentConfigPanel = ({ agentId, agentName, onClose, onRunComplete, hideOute
   const [evalAssignments, setEvalAssignments] = useState([]);
   const [manualSources, setManualSources] = useState([]);
   const [instructions, setInstructions] = useState('');
+  const [codeInstructions, setCodeInstructions] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
+  const [codeSaveStatus, setCodeSaveStatus] = useState('');
   
   // New manual source form state
   const [newSourceTitle, setNewSourceTitle] = useState('');
@@ -135,6 +137,20 @@ const AgentConfigPanel = ({ agentId, agentName, onClose, onRunComplete, hideOute
     }
   };
 
+  // Save code instructions
+  const handleSaveCodeInstructions = async () => {
+    try {
+      setSaving(true);
+      await api.patch(`/api/agents/${agentId}/`, { code_instructions: codeInstructions });
+      setCodeSaveStatus('Saved!');
+      setTimeout(() => setCodeSaveStatus(''), 2000);
+    } catch (err) {
+      console.error(err);
+      setCodeSaveStatus('Error saving');
+    } finally {
+      setSaving(false);
+    }
+  };
   const handleDeleteManualSource = async (id) => {
     try {
       await api.delete(`/api/manual-sources/${id}/`);
@@ -185,6 +201,14 @@ const AgentConfigPanel = ({ agentId, agentName, onClose, onRunComplete, hideOute
           Prompts
         </button>
         <button
+          onClick={() => setActiveTab('code')}
+          className={`flex-1 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'code' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Code
+        </button>
+        <button
           onClick={() => setActiveTab('evaluators')}
           className={`flex-1 py-2 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'evaluators' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -198,7 +222,7 @@ const AgentConfigPanel = ({ agentId, agentName, onClose, onRunComplete, hideOute
             activeTab === 'knowledge' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
           }`}
         >
-          Knowledge Base
+          Knowledge
         </button>
       </div>
 
@@ -265,6 +289,31 @@ const AgentConfigPanel = ({ agentId, agentName, onClose, onRunComplete, hideOute
                   </div>
                 );
               })}
+            </div>
+          </div>
+        ) : activeTab === 'code' ? (
+          <div className="mb-6">
+            <label htmlFor="code-instructions" className="block text-sm font-medium text-gray-700 mb-2">
+              <Code size={14} className="inline mr-1" /> Code Generation Instructions
+            </label>
+            <textarea
+              id="code-instructions"
+              className="w-full border border-gray-300 rounded-lg p-3 text-sm font-mono focus:ring-indigo-500 focus:border-indigo-500 shadow-sm transition-all"
+              rows="6"
+              placeholder="e.g. Write Python code with type hints..."
+              value={codeInstructions}
+              onChange={(e) => setCodeInstructions(e.target.value)}
+              disabled={saving}
+            />
+            <div className="flex justify-end items-center gap-3 mt-2">
+              {codeSaveStatus && <span className={`text-xs ${codeSaveStatus === 'Saved!' ? 'text-emerald-600' : 'text-red-600'}`}>{codeSaveStatus}</span>}
+              <button 
+                onClick={handleSaveCodeInstructions} 
+                disabled={saving}
+                className="px-3 py-1.5 bg-gray-800 text-white text-xs font-medium rounded-lg hover:bg-gray-900 disabled:opacity-50 transition-all shadow-sm"
+              >
+                {saving ? 'Saving...' : 'Save Code Instructions'}
+              </button>
             </div>
           </div>
         ) : activeTab === 'evaluators' ? (

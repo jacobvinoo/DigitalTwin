@@ -82,8 +82,16 @@ class WorkflowAPITestCase(APITestCase):
         url = f"/api/workflows/{workflow_run.id}/"
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        expected_keys = {
+            "status", "current_node", "pending_approvals", "completed_steps", 
+            "failed_steps", "next_actions", "telemetry_summary", "paused_tasks", 
+            "current_task_id", "tasks"
+        }
+        self.assertEqual(set(response.data.keys()), expected_keys)
+        
         self.assertEqual(response.data["status"], "paused")
-        self.assertIn("paused_tasks", response.data)
+        self.assertIn("placeholder", response.data["paused_tasks"])
 
     def test_resume_requires_required_task_approvals(self):
         workflow_run, plan = create_daily_plan(self.topic, self.user)
@@ -107,3 +115,6 @@ class WorkflowAPITestCase(APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsInstance(response.data, list)
+        if len(response.data) > 0:
+            expected_keys = {"id", "status", "created_at", "steps_count"}
+            self.assertEqual(set(response.data[0].keys()), expected_keys)

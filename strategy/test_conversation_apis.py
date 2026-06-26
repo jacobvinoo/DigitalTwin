@@ -48,13 +48,20 @@ class TestConversationAPIs:
         api_client.force_authenticate(user=user)
         response = api_client.get(f"/api/conversations/{session.id}/")
         assert response.status_code == 200
-        assert "messages" in response.data
+        
+        expected_keys = {'id', 'topic', 'user', 'active_entity', 'title', 'status', 'created_at', 'updated_at', 'messages'}
+        assert set(response.data.keys()) == expected_keys
+        
         assert len(response.data["messages"]) == 2
 
     def test_posting_message_stores_user_and_assistant_response(self, api_client, user, session):
         api_client.force_authenticate(user=user)
         response = api_client.post(f"/api/conversations/{session.id}/messages/", {"text": "Prepare today's plan"})
         assert response.status_code == 200
+        
+        expected_keys = {"message", "ui_card", "data", "error", "requires_clarification", "cards"}
+        assert set(response.data.keys()) == expected_keys
+        
         assert "message" in response.data
         assert "cards" in response.data
         

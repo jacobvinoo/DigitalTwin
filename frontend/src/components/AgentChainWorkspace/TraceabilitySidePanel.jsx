@@ -99,7 +99,38 @@ const TraceabilitySidePanel = ({ selectedTrace, onClose, hideOuter }) => {
                     <span className={`font-semibold text-sm ${ev.passed ? 'text-emerald-900' : 'text-red-900'}`}>{ev.evaluator}</span>
                     <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${ev.passed ? 'bg-emerald-200 text-emerald-800' : 'bg-red-200 text-red-800'}`}>Score: {ev.score}/10</span>
                   </div>
-                  <p className="text-xs text-gray-700">{ev.feedback}</p>
+                  {ev.feedback && ev.feedback !== "No direct feedback key." && (
+                    <p className="text-xs text-gray-700 mt-2">{ev.feedback}</p>
+                  )}
+                  {ev.rich_output && ev.rich_output.metric_scores && (
+                    <div className="mt-3 bg-white bg-opacity-60 rounded p-2 border border-gray-200 border-opacity-50">
+                      <div className="text-[10px] uppercase font-bold text-gray-500 mb-1">Metric Breakdown</div>
+                      <div className="grid grid-cols-2 gap-1">
+                        {Object.entries(ev.rich_output.metric_scores).map(([k, v]) => (
+                          <div key={k} className="flex justify-between text-xs">
+                            <span className="text-gray-600 capitalize">{k.replace(/_/g, ' ')}:</span>
+                            <span className="font-semibold">{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {ev.rich_output && ev.rich_output.weaknesses && ev.rich_output.weaknesses.length > 0 && (
+                    <div className="mt-2 text-xs">
+                      <div className="text-[10px] uppercase font-bold text-red-500 mb-1">Weaknesses</div>
+                      <ul className="list-disc pl-4 text-red-800 space-y-0.5">
+                        {ev.rich_output.weaknesses.map((w, i) => <li key={i}>{w}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {ev.rich_output && ev.rich_output.strengths && ev.rich_output.strengths.length > 0 && (
+                    <div className="mt-2 text-xs">
+                      <div className="text-[10px] uppercase font-bold text-emerald-600 mb-1">Strengths</div>
+                      <ul className="list-disc pl-4 text-emerald-800 space-y-0.5">
+                        {ev.rich_output.strengths.map((s, i) => <li key={i}>{s}</li>)}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               ))
             ) : (

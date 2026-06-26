@@ -33,11 +33,25 @@ def run_post_agent_evaluation(agent_trace):
     output_payload_dict = agent_trace.output_payload or {}
     
     evaluations = []
+    skip_recommendations = False  # Flag to indicate whether to skip generating improvement recommendations (e.g., on rate‑limit errors)
     eval_assignments = EvaluationAssignment.objects.filter(agent=agent, enabled=True).order_by('sort_order')
     
     if not eval_assignments.exists():
-        return evaluations
-
+        # Retroactively assign all active EvaluationTemplates for older agents
+        from .models import EvaluationTemplate
+        eval_templates = EvaluationTemplate.objects.all()
+        for idx, template in enumerate(eval_templates):
+            EvaluationAssignment.objects.create(
+                agent=agent,
+                evaluation_template=template,
+                sort_order=idx + 1,
+                enabled=True
+            )
+        eval_assignments = EvaluationAssignment.objects.filter(agent=agent, enabled=True).order_by('sort_order')
+        
+        # If still empty (no templates exist globally), then skip evaluation
+        if not eval_assignments.exists():
+            return evaluations
     llm = get_llm_client()
 
     for eval_assignment in eval_assignments:
@@ -65,7 +79,6 @@ def run_post_agent_evaluation(agent_trace):
                     schema_class=EvaluationResultSchema,
                     model="gpt-4o"
                 )
-            
             eval_data = eval_res.data
             if isinstance(eval_data, dict):
                 score_key = et.score_field if et.score_field else "score"
@@ -74,7 +87,18 @@ def run_post_agent_evaluation(agent_trace):
                 else:
                     raise ValueError(f"Output schema missing configured score_field '{score_key}'")
                 
-                feedback = eval_data.get("feedback", "No direct feedback key.")
+                feedback = eval_data.get("feedback")
+                if not feedback:
+                    # Construct rich feedback from other string/array keys in the schema
+                    feedback_parts = []
+                    for k, v in eval_data.items():
+                        if k not in (score_key, "metric_scores") and v:
+                            if isinstance(v, list) and all(isinstance(i, str) for i in v):
+                                feedback_parts.append(f"{k.replace('_', ' ').title()}:\n- " + "\n- ".join(v))
+                            elif isinstance(v, str):
+                                feedback_parts.append(f"{k.replace('_', ' ').title()}: {v}")
+                    feedback = "\n\n".join(feedback_parts) if feedback_parts else "No feedback provided."
+                    
                 rich_output = eval_data
             else:
                 score = getattr(eval_data, "score", 0)
@@ -98,6 +122,10 @@ def run_post_agent_evaluation(agent_trace):
                 overall_score=score
             )
         except Exception as e:
+            # Detect rate‑limit errors and set flag to skip recommendations
+            if "429" in str(e) or "rate limit" in str(e).lower():
+                skip_recommendations = True
+            
             error_str = str(e).lower()
             from strategy.models import SystemExecutionEvent
             if "score_field" in error_str or "schema" in error_str:
@@ -182,47 +210,36 @@ def run_post_agent_evaluation(agent_trace):
     )
     
     # Generate Improvement Recommendations
-    low_evals = [e for e in evaluations if e.get("score", 0) < 7]
-    for low in low_evals:
-        cat = str(low.get("category", "")).lower()
-        score_val = low.get("score", 0)
-        
-        # Calculate recurrence count
-        recent_histories = AgentEvaluationHistory.objects.filter(agent=agent).order_by('-created_at')[:20]
-        recurring_count = 1
-        for h in recent_histories:
-            if cat == "evidence" and h.evidence_score > 0 and h.evidence_score < 7: recurring_count += 1
-            elif (cat == "safety" or cat == "hallucination") and h.hallucination_score > 0 and h.hallucination_score < 7: recurring_count += 1
-            elif cat == "executive" and h.executive_score > 0 and h.executive_score < 7: recurring_count += 1
-            elif cat == "quality" and h.quality_score > 0 and h.quality_score < 7: recurring_count += 1
+    if not skip_recommendations:
+        low_evals = [e for e in evaluations if e.get("score", 0) < 7]
+        for low in low_evals:
+            cat = str(low.get("category", "")).lower()
+            score_val = low.get("score", 0)
+            
+            # Calculate recurrence count
+            recent_histories = AgentEvaluationHistory.objects.filter(agent=agent).order_by('-created_at')[:20]
+            recurring_count = 1
+            for h in recent_histories:
+                if cat == "evidence" and h.evidence_score > 0 and h.evidence_score < 7: recurring_count += 1
+                elif (cat == "safety" or cat == "hallucination") and h.hallucination_score > 0 and h.hallucination_score < 7: recurring_count += 1
+                elif cat == "executive" and h.executive_score > 0 and h.executive_score < 7: recurring_count += 1
+                elif cat == "quality" and h.quality_score > 0 and h.quality_score < 7: recurring_count += 1
 
-        severity = max(0, 7 - score_val)
-        confidence_score = min(10.0, (recurring_count * 0.5) + severity)
+            severity = max(0, 7 - score_val)
+            confidence_score = min(10.0, (recurring_count * 0.5) + severity)
 
-        if cat == "evidence":
-            root_cause = "- no sources retrieved\n- weak source diversity\n- claims not mapped to evidence"
-            rec_text = "- add Source Recording prompt\n- require Evidence Table output schema\n- add minimum source threshold"
-            target = "rag_sources"
-        elif cat == "safety" or cat == "hallucination":
-            root_cause = "- unsupported claims\n- facts hallucinated outside of RAG context"
-            rec_text = "- add Hallucination Avoidance prompt\n- require Fact Validation step"
-            target = "prompt"
-        elif cat == "executive":
-            root_cause = "- response lacks top-down clarity\n- too in the weeds"
-            rec_text = "- add Decision Framing prompt\n- require Executive Summary output schema"
-            target = "output_schema"
-        elif cat == "quality":
-            root_cause = "- poor formatting and structure"
-            rec_text = "- add Structured Document Writer prompt"
-            target = "prompt"
-        else:
             try:
-                imp_prompt = f"The agent {agent.name} received a low score ({score_val}) for {low.get('evaluator')}. Feedback: {low.get('feedback')}. Please diagnose the root cause and provide a specific recommendation."
+                imp_prompt = (
+                    f"The agent '{agent.name}' received a low score ({score_val}/10) for {low.get('evaluator')}.\n\n"
+                    f"Evaluation Feedback:\n{low.get('feedback')}\n\n"
+                    f"Please diagnose the root cause and provide a specific, actionable recommendation "
+                    f"to fix this issue. DO NOT give generic advice. Tailor it specifically to the feedback above."
+                )
                 imp_res = llm.execute(prompt=imp_prompt, prompt_version="1.0", schema_class=ImprovementRecommendationSchema, model="gpt-4o-mini")
                 
                 if isinstance(imp_res.data, dict):
                     root_cause = imp_res.data.get("root_cause_diagnosis", "Unknown root cause")
-                    rec_text = imp_res.data.get("recommendation", f"Address: {low.get('feedback')}")
+                    rec_text = imp_res.data.get("recommendation", f"Address issues identified in feedback.")
                     target = imp_res.data.get("target_area", "prompt")
                 else:
                     root_cause = imp_res.data.root_cause_diagnosis
@@ -230,28 +247,27 @@ def run_post_agent_evaluation(agent_trace):
                     target = imp_res.data.target_area
             except Exception:
                 root_cause = "Unknown root cause"
-                rec_text = f"Improve system prompt to address: {low.get('feedback')}"
+                rec_text = f"Improve system configuration to address feedback."
                 target = "prompt"
-            
-        rec, created = AgentImprovementRecommendation.objects.get_or_create(
-            agent=agent,
-            issue_type=low.get("evaluator", "General"),
-            target_area=target,
-            status="proposed",
-            defaults={
-                "execution_version": execution_version,
-                "agent_trace": agent_trace,
-                "source_evaluation": str(low),
-                "root_cause_diagnosis": root_cause,
-                "problem": low.get("feedback", "No feedback"),
-                "recommended_change": rec_text,
-                "confidence_score": confidence_score,
-                "recurring_count": recurring_count,
-            }
-        )
-        if not created:
-            rec.recurring_count += 1
-            rec.save(update_fields=['recurring_count'])
+                
+            # Merge with existing recommendation if present (ignore status)
+            rec, created = AgentImprovementRecommendation.objects.get_or_create(
+                agent=agent,
+                issue_type=low.get("evaluator", "General"),
+                defaults={
+                    "execution_version": execution_version,
+                    "agent_trace": agent_trace,
+                    "source_evaluation": str(low),
+                    "root_cause_diagnosis": root_cause,
+                    "problem": low.get("feedback", "No feedback"),
+                    "recommended_change": rec_text,
+                    "confidence_score": confidence_score,
+                    "recurring_count": recurring_count,
+                }
+            )
+            if not created:
+                rec.recurring_count += 1
+                rec.save(update_fields=['recurring_count'])
         
     # Update running experiments
     from .models import AgentImprovementExperiment

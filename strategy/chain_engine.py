@@ -193,38 +193,117 @@ class AgentChainExecutor:
             try:
                 llm = get_llm_client()
                 
-                exec_result = llm.execute(
-                    prompt=prompt,
-                    prompt_version="chain_execution_v1",
-                    schema_dict=agent.output_schema or {
-                        "type": "object",
-                        "properties": {
-                            "markdown_content": {"type": "string"},
-                            "sources": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "title": {"type": "string"},
-                                        "url": {"type": "string"},
-                                        "publisher": {"type": "string"},
-                                        "source_type": {"type": "string"}
+                # Determine if search is needed
+                task_query = ""
+                if isinstance(input_payload, dict):
+                    task_query = input_payload.get("query", input_payload.get("task_title", ""))
+                    
+                needs_search = any(kw in agent.name.lower() for kw in ["search", "research"]) or any(kw in task_query.lower() for kw in ["search", "research", "sources"])
+                
+                if needs_search:
+                    # Run search pipeline
+                    from strategy.utils.web_search import get_search_adapter
+                    from strategy.utils.source_classifier import SourceRelevanceClassifier, SnippetExtractor
+                    from strategy.models import ResearchSearchQuery, PromptTemplate
+                    from strategy.agent_views import SearchQuerySchema
+                    
+                    query_gen_default = "Based on the following task and instructions, generate 15 highly specific web search queries to find the required information. The queries MUST focus on future predictions, upcoming trends (2026-2030+), and forward-looking strategic insights rather than historical data.\n\nTask: {task_query}\n"
+                    query_template, _ = PromptTemplate.objects.get_or_create(
+                        name="System: Search Query Generator",
+                        defaults={
+                            "category": "research",
+                            "prompt_body": query_gen_default,
+                            "is_system_prompt": True,
+                            "description": "Used internally to generate 15 search queries based on the user's task."
+                        }
+                    )
+                    
+                    try:
+                        query_prompt = query_template.prompt_body.format(task_query=task_query)
+                    except KeyError:
+                        query_prompt = query_template.prompt_body + f"\n\nTask: {task_query}"
+                        
+                    query_res = llm.execute(prompt=query_prompt, prompt_version="1.0", schema_class=SearchQuerySchema, model="gpt-4o")
+                    gen_data = query_res.data
+                    queries = gen_data.get("queries", []) if isinstance(gen_data, dict) else gen_data.queries
+                    
+                    search_adapter = get_search_adapter()
+                    classifier = SourceRelevanceClassifier(objective_text=task_query)
+                    extractor = SnippetExtractor()
+                    
+                    accepted_sources = []
+                    rejected_sources = []
+                    trend_evidence_data = []
+                    seen_urls = set()
+                    
+                    for q in queries:
+                        ResearchSearchQuery.objects.create(topic=topic, agent=agent, query=q)
+                        try:
+                            results = search_adapter.search(query=q)
+                            new_results = []
+                            for r in results:
+                                url = r.get("url", "")
+                                if url and url not in seen_urls:
+                                    seen_urls.add(url)
+                                    new_results.append(r)
+                            if new_results:
+                                acc, rej = classifier.filter_sources(new_results)
+                                rejected_sources.extend(rej)
+                                accepted_sources.extend(acc)
+                                for src in acc:
+                                    trends = extractor.extract_trends(source=src, objective_text=task_query)
+                                    src["extracted_trends"] = [t.model_dump() if hasattr(t, "model_dump") else t.dict() for t in trends]
+                                    trend_evidence_data.extend(src["extracted_trends"])
+                        except Exception as e:
+                            import logging
+                            logging.getLogger(__name__).error(f"Real Search Error: {str(e)}")
+                            
+                    output_payload_dict = {
+                        "research_objective": task_query,
+                        "queries_run": queries,
+                        "sources_collected": accepted_sources,
+                        "trend_evidence_records": trend_evidence_data,
+                        "rejected_sources": rejected_sources,
+                        "coverage_gaps": [],
+                        "next_search_queries": []
+                    }
+                    output_payload_dict["markdown_content"] = f"```json\n{json.dumps(output_payload_dict, indent=2)}\n```"
+                    output_payload_dict["sources"] = accepted_sources
+                    output = output_payload_dict
+                    telemetry = query_res.telemetry
+                else:
+                    exec_result = llm.execute(
+                        prompt=prompt,
+                        prompt_version="chain_execution_v1",
+                        schema_dict=agent.output_schema or {
+                            "type": "object",
+                            "properties": {
+                                "markdown_content": {"type": "string"},
+                                "sources": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "title": {"type": "string"},
+                                            "url": {"type": "string"},
+                                            "publisher": {"type": "string"},
+                                            "source_type": {"type": "string"}
+                                        }
                                     }
                                 }
                             }
-                        }
-                    },
-                    model=agent.model_name if agent.model_name and agent.model_name != "default" else "gpt-4o"
-                )
-
-                output = exec_result.data if hasattr(exec_result, "data") else exec_result
-                telemetry = exec_result.telemetry if hasattr(exec_result, "telemetry") else {}
-                
-                # Convert Pydantic objects to dict if necessary
-                if not isinstance(output, dict) and hasattr(output, "dict"):
-                    output = output.dict()
-                elif not isinstance(output, dict):
-                    output = {}
+                        },
+                        model=agent.model_name if agent.model_name and agent.model_name != "default" else "gpt-4o"
+                    )
+    
+                    output = exec_result.data if hasattr(exec_result, "data") else exec_result
+                    telemetry = exec_result.telemetry if hasattr(exec_result, "telemetry") else {}
+                    
+                    # Convert Pydantic objects to dict if necessary
+                    if not isinstance(output, dict) and hasattr(output, "dict"):
+                        output = output.dict()
+                    elif not isinstance(output, dict):
+                        output = {}
                     
                 trace.output_payload = output
                 trace.telemetry = telemetry
@@ -265,10 +344,12 @@ class AgentChainExecutor:
                 completed_outputs[agent.id] = output
                 
             except Exception as e:
+                import traceback
                 trace.output_payload = {}
                 trace.telemetry = telemetry if "telemetry" in locals() else {}
                 trace.validation_result = {
                     "error": str(e),
+                    "traceback": traceback.format_exc(),
                     "node": agent.name,
                     "prompt_version": "chain_execution_v1"
                 }

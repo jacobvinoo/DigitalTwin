@@ -55,9 +55,13 @@ class TestAgentChainExecutorPromptComposition:
         
         # Mock the external LLM call to return a fixed payload
         class MockLLM:
-            def complete_json(self, prompt, *args, **kwargs):
+            def execute(self, prompt, prompt_version, schema_dict=None, schema_class=None, model="gpt-4o"):
                 self.last_prompt = prompt
-                return {"status": "success"}
+                class MockRes:
+                    def __init__(self, data):
+                        self.data = data
+                        self.telemetry = {}
+                return MockRes({"status": "success"})
         
         mock_client = MockLLM()
         mocker.patch("strategy.chain_engine.get_llm_client", return_value=mock_client)
@@ -66,7 +70,8 @@ class TestAgentChainExecutorPromptComposition:
         input_data = {"query": "Test"}
         
         # Execute the chain
-        version = executor.execute(topic=db_setup['topic'], user=db_setup['user'], trigger_input=input_data)
+        version, sorted_ids = executor.create_execution_version(topic=db_setup['topic'], user=db_setup['user'], trigger_input=input_data)
+        executor.execute_existing_version(version.id, sorted_ids, trigger_input=input_data)
         
         prompt_passed = mock_client.last_prompt
         

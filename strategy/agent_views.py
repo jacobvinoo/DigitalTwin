@@ -3,8 +3,9 @@ from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
-from .models import Topic, AgentDefinition, AgentEdge, AgentPromptAssignment, EvaluationAssignment, AgentRunTrace, AgentArtifact, SourceRecord, ChainExecutionVersion, EvaluationRun, AgentEvaluationHistory, AgentImprovementRecommendation
+from .models import Topic, AgentDefinition, AgentEdge, AgentPromptAssignment, EvaluationAssignment, AgentRunTrace, AgentArtifact, SourceRecord, ChainExecutionVersion, EvaluationRun, AgentEvaluationHistory, AgentImprovementRecommendation, WebpageArtifact
 from .agent_serializers import AgentDefinitionSerializer, AgentEdgeSerializer
+from .webpage_serializers import WebpageBuilderRequestSerializer, WebpageArtifactSerializer
 from strategy.agents.client import LLMClient
 from pydantic import BaseModel, Field
 from typing import List
@@ -43,6 +44,22 @@ class AgentDefinitionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return AgentDefinition.objects.filter(topic__owner=self.request.user)
+
+    @action(detail=True, methods=['post'])
+    def build_webpage(self, request, pk=None):
+        agent = self.get_object()
+        serializer = WebpageBuilderRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        artifact = WebpageArtifact.objects.create(
+            agent=agent,
+            topic=agent.topic,
+            html_content=serializer.validated_data['html_content'],
+            css_content=serializer.validated_data.get('css_content', ''),
+            js_content=serializer.validated_data.get('js_content', '')
+        )
+        return Response(WebpageArtifactSerializer(artifact).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
     def run(self, request, pk=None):
@@ -89,6 +106,13 @@ class AgentDefinitionViewSet(viewsets.ModelViewSet):
             # Add user specific task instruction
             task_query = agent.instructions or "Execute your assigned role."
             final_prompt = f"{full_prompt}\n\nUser Task: {task_query}"
+            
+            prompt_traces.append({
+                "template_name": "User Objective",
+                "version": 1,
+                "snapshot": task_query,
+                "content": task_query
+            })
             
             # Inject previous state if it exists
             if previous_artifact and previous_artifact.content:
@@ -157,140 +181,110 @@ class AgentDefinitionViewSet(viewsets.ModelViewSet):
                 else:
                     queries = gen_data.queries
                     
-                all_results = []
-                try:
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.info(f"Executing simulated search for queries: {queries}")
+                from strategy.utils.web_search import get_search_adapter
+                from strategy.utils.source_classifier import SourceRelevanceClassifier, SnippetExtractor
+                from strategy.models import ResearchSearchQuery, SourceRecord, TrendEvidenceRecord
+                
+                search_adapter = get_search_adapter()
+                classifier = SourceRelevanceClassifier(objective_text=task_query)
+                extractor = SnippetExtractor()
+                
+                accepted_sources = []
+                rejected_sources = []
+                trend_evidence_data = []
+                seen_urls = set()
+                
+                # We need to save the run trace FIRST to attach TrendEvidenceRecords to it,
+                # or we can attach it later. Actually we don't have the trace yet. We will create the trace later,
+                # but we can store the DB records later as well, or just return them in the payload.
+                # Actually we can just create the SourceRecords right away, wait, SourceRecord needs an agent_trace.
+                # It's nullable for trace? Yes, agent_trace=models.ForeignKey(null=True).
+                # But it's better to create them after the trace is created.
+                
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"Executing real search for queries: {queries}")
+                
+                for q in queries:
+                    # 1. Store the query
+                    ResearchSearchQuery.objects.create(topic=agent.topic, agent=agent, query=q)
                     
-                    # Because outbound search libraries (DDGS/Google) are blocked by CAPTCHAs in this environment,
-                    # we use an LLM call to simulate a search engine returning high-quality results from McKinsey/Gartner etc.
-                    
-                    # 2. Simulated Search Engine Prompt
-                    sim_search_default = "You are a web search engine API. Generate 8 highly realistic search results for the query: '{q}'. The snippets MUST focus explicitly on future predictions, upcoming market shifts, and emerging paradigms (2026 and beyond). Include sources like McKinsey, Gartner, Forrester, Harvard Business Review, etc. Ensure the URLs look real and the snippets contain specific, forward-looking data points."
-                    sim_template, _ = PromptTemplate.objects.get_or_create(
-                        name="System: Simulated Search Engine",
-                        defaults={
-                            "category": "research",
-                            "prompt_body": sim_search_default,
-                            "is_system_prompt": True,
-                            "description": "Used internally to simulate search engine snippet results for a given query {q}."
-                        }
-                    )
-                    
-                    for q in queries:
-                        try:
-                            sim_prompt = sim_template.prompt_body.format(q=q)
-                        except KeyError:
-                            sim_prompt = sim_template.prompt_body + f"\n\nQuery: {q}"
-                            
-                        sim_res = llm.execute(prompt=sim_prompt, prompt_version="1.0", schema_class=SimulatedSearchResponse, model="gpt-4o-mini")
+                    try:
+                        results = search_adapter.search(query=q)
                         
-                        sim_data = sim_res.data
-                        if isinstance(sim_data, dict):
-                            res_list = sim_data.get("results", [])
-                            for r in res_list:
-                                all_results.append(r)
-                        else:
-                            for r in sim_data.results:
-                                    all_results.append({"title": r.title, "href": r.href, "body": r.body})
-                except Exception as e:
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"Simulated Search Error: {str(e)}")
-                
-                if all_results:
-                    # 3. Document Synthesis Prompt
-                    synthesis_default = "Use the following real-time web results to write your document. CRITICAL INSTRUCTIONS:\n1. You MUST write an exhaustive, highly detailed document that synthesizes every single unique insight found in these sources.\n2. Do NOT summarize or group everything into just a few high-level bullet points. Create comprehensive sections detailing all the specific findings, metrics, and future predictions.\n3. Focus heavily on future predictions and emerging trends.\n4. You MUST cite ALL of these sources in the text and include EVERY SINGLE ONE of them in your final 'sources' JSON array.\n\n"
-                    synth_template, _ = PromptTemplate.objects.get_or_create(
-                        name="System: Search Document Synthesis",
-                        defaults={
-                            "category": "research",
-                            "prompt_body": synthesis_default,
-                            "is_system_prompt": True,
-                            "description": "Used internally as instructions for processing and writing the final document based on search context."
-                        }
-                    )
-                    
-                    search_context += f"\n\n--- REAL-TIME WEB SEARCH CONTEXT ---\n{synth_template.prompt_body}\n"
-                    # Deduplicate by URL and Title to avoid dropping mock data that reuses base domains
-                    seen_sources = set()
-                    for r in all_results:
-                        url = r.get("href", "")
-                        title = r.get("title", "")
-                        source_key = f"{url}-{title}"
-                        if source_key and source_key not in seen_sources:
-                            seen_sources.add(source_key)
-                            search_context += f"Title: {title}\nURL: {url}\nSnippet: {r.get('body')}\n\n"
+                        # Deduplicate simple URLs
+                        new_results = []
+                        for r in results:
+                            url = r.get("url", "")
+                            if url and url not in seen_urls:
+                                seen_urls.add(url)
+                                new_results.append(r)
+                                
+                        if new_results:
+                            acc, rej = classifier.filter_sources(new_results)
+                            rejected_sources.extend(rej)
+                            accepted_sources.extend(acc)
                             
-                final_prompt += search_context
-
-            actual_model = agent.model_name if agent.model_name and agent.model_name != "default" else "gpt-4o"
-            
-            # 2. Execute the LLM for Generation
-            if 'llm' not in locals():
-                llm = LLMClient()
+                            for src in acc:
+                                trends = extractor.extract_trends(source=src, objective_text=task_query)
+                                src["extracted_trends"] = [t.model_dump() if hasattr(t, "model_dump") else t.dict() for t in trends]
+                                trend_evidence_data.extend(src["extracted_trends"])
+                    except Exception as e:
+                        logger.error(f"Real Search Error: {str(e)}")
+                        
+                # We do NOT run an LLM to hallucinate the document.
+                # Instead, we programmatically construct a Markdown Evidence Catalogue.
+                md_lines = [f"# Research Evidence Catalogue\n"]
+                md_lines.append(f"## Queries Executed\n" + "\n".join([f"- {q}" for q in queries]) + "\n")
                 
-            gen_result = llm.execute(
-                prompt=final_prompt,
-                prompt_version="1.0",
-                schema_class=AgentExecutionOutputSchema,
-                model=actual_model
-            )
-            
-            # Parse generation data
-            gen_data = gen_result.data
-            if isinstance(gen_data, dict):
-                markdown_content = gen_data.get("markdown_content", "No content generated.")
-                sources_data = gen_data.get("sources", [])
+                md_lines.append("## Validated Sources & Trend Evidence")
+                if not accepted_sources:
+                    md_lines.append("No highly relevant sources passed the rigorous classification filters.\n")
+                
+                for idx, src in enumerate(accepted_sources, 1):
+                    md_lines.append(f"### {idx}. {src.get('title', 'Unknown Title')}")
+                    if src.get('url'):
+                        md_lines.append(f"**URL:** [{src.get('publisher', 'Link')}]({src.get('url')})")
+                    md_lines.append(f"**Summary Snippet:** {src.get('snippet', '')}")
+                    
+                    trends = src.get("extracted_trends", [])
+                    if trends:
+                        md_lines.append("**Extracted Trends & Signals:**")
+                        for t in trends:
+                            md_lines.append(f"- **Signal:** {t.get('trend_signal', '')} (Confidence: {t.get('confidence_score', '')})")
+                            md_lines.append(f"  - *Future Relevance:* {t.get('future_relevance', '')}")
+                            md_lines.append(f"  - *Impact Area:* {t.get('impact_area', '')}")
+                    md_lines.append("\n---\n")
+
+                if rejected_sources:
+                    md_lines.append("## Rejected Sources")
+                    md_lines.append(f"Rejected {len(rejected_sources)} sources due to irrelevance, hallucination risk, or SEO spam.")
+                    for idx, src in enumerate(rejected_sources[:5], 1):
+                        md_lines.append(f"- **{src.get('title', 'Unknown')}**: {src.get('rejection_reason', 'Irrelevant')}")
+                    if len(rejected_sources) > 5:
+                        md_lines.append(f"- *(And {len(rejected_sources) - 5} more...)*")
+
+                final_markdown = "\n".join(md_lines)
+                
+                output_payload_dict = {
+                    "research_objective": task_query,
+                    "queries_run": queries,
+                    "sources_collected": accepted_sources,
+                    "trend_evidence_records": trend_evidence_data,
+                    "rejected_sources": rejected_sources,
+                    "coverage_gaps": [],
+                    "next_search_queries": [],
+                    "markdown_content": final_markdown,
+                    "sources": accepted_sources
+                }
             else:
-                markdown_content = gen_data.markdown_content
-                sources_data = [s.dict() for s in gen_data.sources]
-                
-            # Ensure that ALL search results actually make it into the sources array
-            # LLMs often truncate JSON arrays to save tokens, so we enforce it here programmatically
-            seen = {f'{s.get("url", "")}-{s.get("title", "")}' for s in sources_data if s.get("url")}
-            
-            if manual_sources.exists():
-                for ms in manual_sources:
-                    ms_key = f"{ms.url}-{ms.title}"
-                    if ms.url and ms_key not in seen:
-                        sources_data.append({
-                            "title": ms.title,
-                            "url": ms.url,
-                            "publisher": "Manual Knowledge Base",
-                            "source_type": "manual"
-                        })
-                        seen.add(ms_key)
-
-            if all_results:
-                missing_results = []
-                for r in all_results:
-                    url = r.get("href", "")
-                    title = r.get("title", "Simulated Search Result")
-                    source_key = f"{url}-{title}"
-                    if source_key not in seen:
-                        sources_data.append({
-                            "title": title,
-                            "url": url,
-                            "publisher": "Web Search API",
-                            "source_type": "web"
-                        })
-                        seen.add(source_key)
-                        missing_results.append(r)
-                
-                # Programmatically append dropped sources to the markdown document to guarantee zero information loss
-                if missing_results:
-                    appendix = "\n\n## Appendix: Additional Raw Search Context\n\n"
-                    appendix += "The following search contexts were retrieved during execution. They are appended here programmatically to guarantee zero information loss for downstream extraction nodes:\n\n"
-                    for m in missing_results:
-                        appendix += f"- **{m.get('title', 'Unknown')}** ({m.get('href', '')}): {m.get('body', '')}\n"
-                    markdown_content += appendix
-                        
-            output_payload_dict = {
-                "markdown_content": markdown_content,
-                "sources": sources_data
-            }
+                # If needs_search is False, just do a normal LLM execution
+                llm = LLMClient()
+                res = llm.execute(prompt=final_prompt, prompt_version="1.0", schema_class=AgentExecutionOutputSchema, model="gpt-4o")
+                output_payload_dict = res.data.dict() if hasattr(res.data, 'dict') else res.data
+                if "sources" not in output_payload_dict:
+                    output_payload_dict["sources"] = []
+                accepted_sources = output_payload_dict["sources"]
 
             # Save AgentRunTrace
             run_trace = AgentRunTrace.objects.create(
@@ -301,7 +295,7 @@ class AgentDefinitionViewSet(viewsets.ModelViewSet):
                 input_payload={"query": task_query},
                 output_payload=output_payload_dict,
                 prompt_snapshot=final_prompt,
-                telemetry=gen_result.telemetry
+                telemetry=query_res.telemetry if 'query_res' in locals() else {"execution_time_ms": 0}
             )
             
             # Attach active experiments
@@ -316,20 +310,36 @@ class AgentDefinitionViewSet(viewsets.ModelViewSet):
                 agent_trace=run_trace,
                 artifact_type="markdown",
                 title=f"{agent.name} Output",
-                content=markdown_content,
+                content=output_payload_dict["markdown_content"],
                 payload=output_payload_dict
             )
             
-            # Save Sources
-            for src in sources_data:
-                SourceRecord.objects.create(
+            # Save Sources and Trend Evidence Records
+            from strategy.models import SourceRecord, TrendEvidenceRecord
+            for src in accepted_sources:
+                db_source = SourceRecord.objects.create(
                     topic=agent.topic,
                     agent_trace=run_trace,
                     title=src.get("title", "Unknown"),
                     url=src.get("url", ""),
                     publisher=src.get("publisher", ""),
-                    source_type=src.get("source_type", "web")
+                    source_type=src.get("source_type", "web"),
+                    content_summary=src.get("snippet", "")
                 )
+                
+                # Save the attached trend evidence records
+                trends = src.get("extracted_trends", [])
+                for t in trends:
+                    TrendEvidenceRecord.objects.create(
+                        topic=agent.topic,
+                        agent_trace=run_trace,
+                        source=db_source,
+                        snippet=t.get("snippet", ""),
+                        trend_signal=t.get("trend_signal", ""),
+                        future_relevance=t.get("future_relevance", ""),
+                        impact_area=t.get("impact_area", ""),
+                        confidence_score=t.get("confidence_score", 0.7)
+                    )
                 
             # 3. Execute Evaluators against the Generation Result
             from strategy.evaluation_engine import run_post_agent_evaluation
@@ -337,14 +347,28 @@ class AgentDefinitionViewSet(viewsets.ModelViewSet):
             
             # 4. Construct Output Trace
             trace = {
-                "id": agent.id,
+                "id": run_trace.id,
+                "agent_id": agent.id,
                 "agent_name": agent.name,
-                "input_payload": {"query": task_query},
+                "run_order": run_trace.run_order,
+                "status": run_trace.status,
+                "input_payload": run_trace.input_payload,
+                "mapped_input_payload": run_trace.mapped_input_payload,
+                "output_payload": run_trace.output_payload,
+                "validation_result": evaluations,
+                "prompt_snapshot": run_trace.prompt_snapshot,
                 "prompt_traces": prompt_traces,
-                "output_payload": {"markdown_content": markdown_content, "sources": sources_data},
-                "evaluations": evaluations,
-                "execution_time_ms": gen_result.telemetry["execution_time_ms"],
-                "timestamp": "Just now"
+                "evaluations": [
+                    {
+                        "evaluator": ev.get("evaluator"),
+                        "score": ev.get("score"),
+                        "feedback": ev.get("feedback"),
+                        "passed": ev.get("passed")
+                    } for ev in evaluations
+                ],
+                "started_at": run_trace.started_at,
+                "completed_at": run_trace.completed_at,
+                "execution_time_ms": query_res.telemetry["execution_time_ms"] if 'query_res' in locals() else 0
             }
         
             return Response({
@@ -357,6 +381,48 @@ class AgentDefinitionViewSet(viewsets.ModelViewSet):
             logger = logging.getLogger(__name__)
             logger.error(f"Agent Run Error: {str(e)}\n{traceback.format_exc()}")
             return Response({"error": str(e)}, status=500)
+    @action(detail=True, methods=['post'], url_path='visual_webpage_builder')
+    def visual_webpage_builder(self, request, pk=None):
+        """Generate a visual webpage artifact from structured inputs."""
+        agent = self.get_object()
+        serializer = WebpageBuilderRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        # Ensure an execution version exists
+        execution_version, _ = ChainExecutionVersion.objects.get_or_create(
+            topic=agent.topic,
+            version_number=1,
+            defaults={"status": "draft", "started_by": request.user}
+        )
+        # Create a minimal run trace
+        run_trace = AgentRunTrace.objects.create(
+            agent=agent,
+            execution_version=execution_version,
+            run_order=1,
+            status="completed",
+            input_payload=data,
+            output_payload={},
+            prompt_snapshot="",
+        )
+        # Placeholder HTML generation
+        title = data.get('title', 'Generated Dashboard')
+        code = f"<html><head><title>{title}</title></head><body><h1>{title}</h1></body></html>"
+        # Determine source data references present in the payload
+        source_refs = [key for key in WebpageArtifact.ALLOWED_INPUTS if data.get(key)]
+        # Create the webpage artifact
+        artifact = WebpageArtifact.objects.create(
+            topic=agent.topic,
+            execution_version=execution_version,
+            agent_trace=run_trace,
+            title=title,
+            framework="html",
+            component_name="",
+            source_data_refs=source_refs,
+            code=code,
+            rendered_preview_url="",
+        )
+        return Response(WebpageArtifactSerializer(artifact).data, status=status.HTTP_201_CREATED)
+
 
 class AgentEdgeViewSet(viewsets.ModelViewSet):
     serializer_class = AgentEdgeSerializer
@@ -371,7 +437,19 @@ def create_topic_agent(request, topic_id):
     topic = get_object_or_404(Topic, id=topic_id, owner=request.user)
     serializer = AgentDefinitionSerializer(data=request.data)
     if serializer.is_valid():
-        serializer.save(topic=topic)
+        agent = serializer.save(topic=topic)
+        
+        # Auto-assign all active EvaluationTemplates so metrics work out-of-the-box
+        from strategy.models import EvaluationTemplate, EvaluationAssignment
+        eval_templates = EvaluationTemplate.objects.all()
+        for idx, template in enumerate(eval_templates):
+            EvaluationAssignment.objects.create(
+                agent=agent,
+                evaluation_template=template,
+                sort_order=idx + 1,
+                enabled=True
+            )
+            
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

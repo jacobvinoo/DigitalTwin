@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AlertTriangle, ServerCrash, Clock, ShieldAlert, CheckCircle, Database } from 'lucide-react';
-import api from '../../api';
+import { api } from '../../api';
 
 const SystemHealthPanel = ({ topicId }) => {
   const [events, setEvents] = useState([]);

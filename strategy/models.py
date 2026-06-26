@@ -15,7 +15,9 @@ class Topic(models.Model):
         ("custom_agent_chain", "Custom Agent Chain Workspace"),
     ]
 
-    title = models.CharField(max_length=255)
+    # Alias field for compatibility with older code/tests
+    name = models.CharField(max_length=255, null=True, blank=True)
+    title = models.CharField(max_length=255, null=True, blank=True)
     description = models.TextField(blank=True)
     strategic_context = models.TextField(blank=True)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
@@ -23,6 +25,16 @@ class Topic(models.Model):
     workspace_type = models.CharField(max_length=50, choices=WORKSPACE_TYPES, default="strategy")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        # Ensure title and name stay in sync for legacy usage
+        if not self.title and self.name:
+            self.title = self.name
+        if not self.name and self.title:
+            self.name = self.title
+        super().save(*args, **kwargs)
+
+
 
 class Objective(models.Model):
     PRIORITY_CHOICES = [
@@ -473,10 +485,25 @@ class VoiceTranscriptRecord(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class AgentDefinition(models.Model):
+    AGENT_TYPE_CHOICES = [
+        ("default", "Default"),
+        ("visual_webpage_builder", "Visual Webpage Builder"),
+        # other existing types can be added here
+    ]
+    agent_type = models.CharField(
+        max_length=64,
+        choices=AGENT_TYPE_CHOICES,
+        default="default",
+    )
     topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name="agent_definitions")
     name = models.CharField(max_length=255)
     role = models.CharField(max_length=255, blank=True)
     description = models.TextField(blank=True)
+    purpose = models.TextField(blank=True)
+    allowed_inputs = models.JSONField(default=list, blank=True)
+    output_artifact_type = models.CharField(max_length=50, blank=True)
+    requires_code_generation = models.BooleanField(default=False)
+    requires_human_review = models.BooleanField(default=False)
     system_prompt = models.TextField()
     instructions = models.TextField(blank=True)
     input_schema = models.JSONField(default=dict, blank=True)
@@ -579,7 +606,7 @@ class AgentRunTrace(models.Model):
         on_delete=models.CASCADE,
         related_name="agent_traces",
     )
-    agent = models.ForeignKey(AgentDefinition, on_delete=models.PROTECT)
+    agent = models.ForeignKey(AgentDefinition, on_delete=models.SET_NULL, null=True, blank=True)
     run_order = models.PositiveIntegerField()
     status = models.CharField(
         max_length=50,
@@ -973,3 +1000,110 @@ class HumanOutputReview(models.Model):
     feedback_reason = models.TextField(blank=True)
     score = models.IntegerField(null=True, blank=True, help_text="Human score out of 10")
     created_at = models.DateTimeField(auto_now_add=True)
+
+class ResearchSearchQuery(models.Model):
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE)
+    agent = models.ForeignKey(AgentDefinition, on_delete=models.CASCADE)
+    query = models.TextField()
+    intent = models.CharField(max_length=100, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class TrendEvidenceRecord(models.Model):
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE)
+    agent_trace = models.ForeignKey(AgentRunTrace, on_delete=models.CASCADE)
+    source = models.ForeignKey(SourceRecord, on_delete=models.CASCADE)
+
+    snippet = models.TextField()
+    trend_signal = models.TextField()
+    future_relevance = models.TextField()
+    impact_area = models.CharField(max_length=100)
+
+    confidence_score = models.FloatField(default=0.7)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+from django.db import models
+from django.conf import settings
+
+class WebpageArtifact(models.Model):
+    """Model to store generated webpage artifacts from Visual Webpage Builder agents.
+
+    Mirrors the JSON schema in the specification. Validation of generated code is
+    performed in the serializer.
+    """
+
+    # Core relationships
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name="webpage_artifacts")
+    execution_version = models.ForeignKey(
+        "ChainExecutionVersion",
+        on_delete=models.CASCADE,
+        related_name="webpage_artifacts",
+    )
+    agent_trace = models.ForeignKey(
+        "AgentRunTrace",
+        on_delete=models.CASCADE,
+        related_name="webpage_artifacts",
+    )
+
+    # Metadata
+    title = models.CharField(max_length=255)
+    artifact_type = models.CharField(max_length=50, default="webpage")
+    framework = models.CharField(max_length=50, default="react_tailwind")
+
+    # Component identifiers
+    component_name = models.CharField(max_length=255)
+    entry_component_name = models.CharField(max_length=255, blank=True)
+
+    # References to upstream data – stored as a list of strings
+    source_data_refs = models.JSONField(default=list, blank=True)
+
+    # Generated code and optional preview URL
+    code = models.TextField()
+    rendered_preview_url = models.TextField(blank=True)
+
+    # Validation result payload – can be used by the agent to report checks
+    validation_result = models.JSONField(default=dict, blank=True)
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # Allowed upstream data identifiers – kept in sync with the agent spec
+    ALLOWED_INPUTS = [
+        "timeline_matrix",
+        "trend_details",
+        "trend_clusters",
+        "monitoring_indicators",
+        "source_records",
+    ]
+
+    def clean(self):
+        """Model‑level validation.
+
+        * ``source_data_refs`` must be a subset of ``ALLOWED_INPUTS``.
+        * ``code`` must not contain prohibited JavaScript patterns.
+        """
+        from django.core.exceptions import ValidationError
+        import re
+
+        # Validate source references
+        if self.source_data_refs:
+            invalid = [ref for ref in self.source_data_refs if ref not in self.ALLOWED_INPUTS]
+            if invalid:
+                raise ValidationError({"source_data_refs": f"Invalid input references: {invalid}"})
+
+        # Basic safety scan for disallowed patterns in generated code
+        prohibited_patterns = [
+            r"dangerouslySetInnerHTML",
+            r"eval\\s*\\(",
+            r"window\\.location",
+            r"fetch\\s*\\(",
+            r"<script",
+        ]
+        for pattern in prohibited_patterns:
+            if re.search(pattern, self.code, flags=re.IGNORECASE):
+                raise ValidationError({"code": "Prohibited pattern detected in generated code"})
+
+        super().clean()
+
+    class Meta:
+        ordering = ["-created_at"]

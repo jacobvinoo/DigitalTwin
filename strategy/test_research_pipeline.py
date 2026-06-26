@@ -109,22 +109,20 @@ class TestResearchPipeline:
         brief = ResearchBrief.objects.get(task=research_task)
         assert len(brief.research_questions) >= 5
 
-    def test_source_record_can_be_attached_to_task(self, topic, research_task):
+    def test_source_record_can_be_attached_to_topic(self, topic):
         source = SourceRecord.objects.create(
             topic=topic,
-            task=research_task,
             title="Search Best Practices 2026",
             url="http://example.com/search",
             publisher="Tech Insights",
             source_type="article"
         )
         assert source.id is not None
-        assert research_task.sourcerecord_set.count() == 1
+        assert topic.source_records.count() == 1
 
     def test_evidence_quote_must_link_to_source_record(self, topic, research_task):
         source = SourceRecord.objects.create(
             topic=topic,
-            task=research_task,
             title="Search Best Practices 2026",
             source_type="article"
         )
@@ -140,7 +138,6 @@ class TestResearchPipeline:
     def test_research_finding_must_link_to_evidence(self, topic, research_task):
         source = SourceRecord.objects.create(
             topic=topic,
-            task=research_task,
             title="Search Best Practices 2026",
             source_type="article"
         )
